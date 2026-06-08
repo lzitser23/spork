@@ -71,7 +71,7 @@ function EmptyState({
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
       <div>
-        <div className="text-3xl font-semibold tracking-tight">spoon</div>
+        <div className="text-3xl font-semibold tracking-tight">spork</div>
         <div className="mt-1.5 text-sm text-muted-foreground">
           a small, black, monospace git client
         </div>
@@ -168,7 +168,7 @@ export default function App() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-[13px] text-foreground">
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className="font-semibold tracking-tight text-muted-foreground">spoon</span>
+        <span className="font-semibold tracking-tight text-muted-foreground">spork</span>
 
         {repo && (
           <>

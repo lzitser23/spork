@@ -130,7 +130,7 @@
     }
 }
 
-/* ── Spoon: pure-black, monospace overrides ─────────────────── */
+/* ── Spork: pure-black, monospace overrides ─────────────────── */
 .dark {
   --background: oklch(0 0 0);
   --card: oklch(0.16 0 0);

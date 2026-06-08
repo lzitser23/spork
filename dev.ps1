@@ -1,4 +1,4 @@
-# Launch Spoon in dev mode.
+# Launch Spork in dev mode.
 #
 # On this machine `cargo` can't find the MSVC linker / Windows SDK on its own,
 # so this script pulls in the Visual Studio 2019 developer environment first,

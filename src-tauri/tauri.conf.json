@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Spoon",
+  "productName": "Spork",
   "version": "0.1.0",
-  "identifier": "com.lzitser.spoon",
+  "identifier": "com.lzitser.spork",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Spoon",
+        "title": "Spork",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
