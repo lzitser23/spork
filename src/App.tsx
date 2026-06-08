@@ -1,9 +1,15 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactElement } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  Archive,
+  ArrowDown,
+  ArrowUp,
+  Cloud,
+  Download,
+  ExternalLink,
   FolderOpen,
   GitBranch,
-  GitCommitHorizontal,
   RefreshCw,
 } from "lucide-react";
 
@@ -12,56 +18,56 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Sidebar, type View } from "@/components/Sidebar";
+import { CommitList } from "@/components/CommitList";
+import { CommitDetail } from "@/components/CommitDetail";
+import { DiffView } from "@/components/DiffView";
+import { FileBrowser } from "@/components/FileBrowser";
+import { CloneDialog } from "@/components/CloneDialog";
+import { remoteHostLabel, remoteWebUrl } from "@/lib/remote";
 import {
   gitBranches,
+  gitFetch,
   gitLog,
+  gitPull,
+  gitPush,
+  gitRemotes,
+  gitStash,
+  gitStashes,
   gitStatus,
+  gitTags,
   openRepo,
   type Branch,
   type Commit,
+  type Remote,
   type RepoInfo,
+  type Stash,
   type StatusEntry,
 } from "@/lib/git";
 
-function relativeTime(unixSeconds: number): string {
-  const s = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}mo`;
-  return `${Math.floor(mo / 12)}y`;
-}
-
-function SectionLabel({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
+/** Wrap any single element with a hover tooltip. */
+function Hint({ label, children }: { label: string; children: ReactElement }) {
   return (
-    <div
-      className={cn(
-        "px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60",
-        className,
-      )}
-    >
-      {children}
-    </div>
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
-function EmptyState({ onOpen, busy }: { onOpen: () => void; busy: boolean }) {
+function EmptyState({
+  onOpen,
+  onClone,
+  busy,
+}: {
+  onOpen: () => void;
+  onClone: () => void;
+  busy: boolean;
+}) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
       <div>
@@ -70,9 +76,14 @@ function EmptyState({ onOpen, busy }: { onOpen: () => void; busy: boolean }) {
           a small, black, monospace git client
         </div>
       </div>
-      <Button onClick={onOpen} disabled={busy} variant="outline">
-        <FolderOpen /> Open a repository
-      </Button>
+      <div className="flex gap-2">
+        <Button onClick={onOpen} disabled={busy} variant="outline">
+          <FolderOpen /> Open a repository
+        </Button>
+        <Button onClick={onClone} disabled={busy} variant="ghost">
+          <Cloud /> Clone from URL
+        </Button>
+      </div>
     </div>
   );
 }
@@ -82,7 +93,13 @@ export default function App() {
   const [commits, setCommits] = useState<Commit[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [status, setStatus] = useState<StatusEntry[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [remotes, setRemotes] = useState<Remote[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [stashes, setStashes] = useState<Stash[]>([]);
+  const [selectedHash, setSelectedHash] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [view, setView] = useState<View>("history");
+  const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,16 +108,23 @@ export default function App() {
     setError(null);
     try {
       const info = await openRepo(path);
-      const [log, br, st] = await Promise.all([
-        gitLog(info.path, 200),
+      const [log, br, st, rem, tg, stash] = await Promise.all([
+        gitLog(info.path, 300),
         gitBranches(info.path),
         gitStatus(info.path),
+        gitRemotes(info.path),
+        gitTags(info.path),
+        gitStashes(info.path),
       ]);
       setRepo(info);
       setCommits(log);
       setBranches(br);
       setStatus(st);
-      setSelected(log[0]?.hash ?? null);
+      setRemotes(rem);
+      setTags(tg);
+      setStashes(stash);
+      setSelectedHash(log[0]?.hash ?? null);
+      setSelectedFile(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -121,12 +145,30 @@ export default function App() {
     if (repo) void load(repo.path);
   }, [repo, load]);
 
+  const runAction = useCallback(
+    async (fn: (p: string) => Promise<string>, label: string) => {
+      if (!repo) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await fn(repo.path);
+        await load(repo.path);
+      } catch (e) {
+        setError(`${label}: ${String(e)}`);
+        setBusy(false);
+      }
+    },
+    [repo, load],
+  );
+
+  const originRemote = remotes.find((r) => r.name === "origin") ?? remotes[0];
+  const webUrl = originRemote ? remoteWebUrl(originRemote.url) : null;
+  const hostLabel = (originRemote && remoteHostLabel(originRemote.url)) || "Web";
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-[13px] text-foreground">
-      <header className="flex h-10 shrink-0 items-center gap-3 border-b border-border px-3">
-        <span className="font-semibold tracking-tight text-muted-foreground">
-          spoon
-        </span>
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+        <span className="font-semibold tracking-tight text-muted-foreground">spoon</span>
 
         {repo && (
           <>
@@ -136,32 +178,67 @@ export default function App() {
               <GitBranch className="size-3" />
               {repo.branch}
             </Badge>
-            {repo.head && (
-              <span className="text-muted-foreground">{repo.head}</span>
+            {repo.head && <span className="text-muted-foreground">{repo.head}</span>}
+
+            <Separator orientation="vertical" className="h-4" />
+            <Hint label="Fetch all remotes & prune">
+              <Button size="xs" variant="ghost" onClick={() => runAction(gitFetch, "fetch")} disabled={busy}>
+                <Download /> Fetch
+              </Button>
+            </Hint>
+            <Hint label="Pull (fast-forward only)">
+              <Button size="xs" variant="ghost" onClick={() => runAction(gitPull, "pull")} disabled={busy}>
+                <ArrowDown /> Pull
+              </Button>
+            </Hint>
+            <Hint label="Push the current branch">
+              <Button size="xs" variant="ghost" onClick={() => runAction(gitPush, "push")} disabled={busy}>
+                <ArrowUp /> Push
+              </Button>
+            </Hint>
+            <Hint label="Stash working-tree changes (git stash)">
+              <Button size="xs" variant="ghost" onClick={() => runAction(gitStash, "stash")} disabled={busy}>
+                <Archive /> Stash
+              </Button>
+            </Hint>
+            {webUrl && (
+              <Hint label={`Open on ${hostLabel} in your browser`}>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => openUrl(webUrl).catch((e) => setError(String(e)))}
+                >
+                  <ExternalLink /> {hostLabel}
+                </Button>
+              </Hint>
             )}
           </>
         )}
 
         <div className="ml-auto flex items-center gap-1.5">
           {repo && (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              onClick={refresh}
-              disabled={busy}
-              aria-label="Refresh"
-            >
-              <RefreshCw className={busy ? "animate-spin" : undefined} />
-            </Button>
+            <Hint label="Refresh">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={refresh}
+                disabled={busy}
+                aria-label="Refresh"
+              >
+                <RefreshCw className={busy ? "animate-spin" : undefined} />
+              </Button>
+            </Hint>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={chooseRepo}
-            disabled={busy}
-          >
-            <FolderOpen /> Open
-          </Button>
+          <Hint label="Clone a repository from a URL">
+            <Button size="sm" variant="ghost" onClick={() => setCloneOpen(true)} disabled={busy}>
+              <Cloud /> Clone
+            </Button>
+          </Hint>
+          <Hint label="Open a local repository">
+            <Button size="sm" variant="outline" onClick={chooseRepo} disabled={busy}>
+              <FolderOpen /> Open
+            </Button>
+          </Hint>
         </div>
       </header>
 
@@ -173,80 +250,87 @@ export default function App() {
 
       {repo ? (
         <ResizablePanelGroup orientation="horizontal" className="flex-1">
-          <ResizablePanel defaultSize={24} minSize={15} maxSize={40}>
-            <ScrollArea className="h-full">
-              <div className="p-1.5">
-                <SectionLabel>Branches</SectionLabel>
-                {branches.map((b) => (
-                  <div
-                    key={b.name}
-                    className={cn(
-                      "flex items-center gap-2 rounded-md px-2 py-1",
-                      b.is_current
-                        ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:bg-muted/50",
-                    )}
-                  >
-                    <GitBranch className="size-3 shrink-0" />
-                    <span className="truncate">{b.name}</span>
-                  </div>
-                ))}
-
-                <SectionLabel>Changes · {status.length}</SectionLabel>
-                {status.length === 0 ? (
-                  <div className="px-2 py-1 text-muted-foreground/70">
-                    working tree clean
-                  </div>
-                ) : (
-                  status.map((s, i) => (
-                    <div
-                      key={`${s.path}-${i}`}
-                      className="flex items-center gap-2 rounded-md px-2 py-1"
-                    >
-                      <span className="w-5 shrink-0 text-center text-amber-500">
-                        {(s.x + s.y).trim() || "?"}
-                      </span>
-                      <span className="truncate text-muted-foreground">
-                        {s.path}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </ScrollArea>
+          <ResizablePanel
+            defaultSize="260px"
+            minSize="180px"
+            maxSize="460px"
+            groupResizeBehavior="preserve-pixel-size"
+          >
+            <div className="h-full border-r border-border">
+              <Sidebar
+                view={view}
+                onViewChange={setView}
+                branches={branches}
+                status={status}
+                remotes={remotes}
+                tags={tags}
+                stashes={stashes}
+              />
+            </div>
           </ResizablePanel>
 
           <ResizableHandle />
 
-          <ResizablePanel defaultSize={76}>
-            <ScrollArea className="h-full">
-              {commits.map((c) => (
-                <button
-                  key={c.hash}
-                  onClick={() => setSelected(c.hash)}
-                  className={cn(
-                    "flex w-full items-center gap-3 border-b border-border/30 px-3 py-1.5 text-left",
-                    selected === c.hash ? "bg-muted" : "hover:bg-muted/40",
+          <ResizablePanel>
+            {view === "files" ? (
+              <FileBrowser repoPath={repo.path} />
+            ) : (
+              <ResizablePanelGroup orientation="vertical">
+                <ResizablePanel defaultSize="58%" minSize="20%">
+                  <CommitList
+                    commits={commits}
+                    selected={selectedHash}
+                    onSelect={(h) => {
+                      setSelectedHash(h);
+                      setSelectedFile(null);
+                    }}
+                  />
+                </ResizablePanel>
+
+                <ResizableHandle />
+
+                <ResizablePanel defaultSize="42%" minSize="15%">
+                  {selectedHash ? (
+                    <ResizablePanelGroup orientation="horizontal">
+                      <ResizablePanel defaultSize="42%" minSize="20%">
+                        <div className="h-full border-t border-border">
+                          <CommitDetail
+                            repoPath={repo.path}
+                            hash={selectedHash}
+                            selectedFile={selectedFile}
+                            onSelectFile={setSelectedFile}
+                          />
+                        </div>
+                      </ResizablePanel>
+                      <ResizableHandle />
+                      <ResizablePanel defaultSize="58%" minSize="20%">
+                        <div className="h-full border-l border-t border-border">
+                          <DiffView repoPath={repo.path} hash={selectedHash} file={selectedFile} />
+                        </div>
+                      </ResizablePanel>
+                    </ResizablePanelGroup>
+                  ) : (
+                    <div className="flex h-full items-center justify-center border-t border-border text-muted-foreground/50">
+                      select a commit
+                    </div>
                   )}
-                >
-                  <GitCommitHorizontal className="size-3.5 shrink-0 text-muted-foreground/70" />
-                  <span className="shrink-0 text-muted-foreground">
-                    {c.short_hash}
-                  </span>
-                  <span className="flex-1 truncate">{c.subject}</span>
-                  <span className="shrink-0 truncate text-muted-foreground/80">
-                    {c.author_name}
-                  </span>
-                  <span className="w-10 shrink-0 text-right text-muted-foreground/60">
-                    {relativeTime(c.timestamp)}
-                  </span>
-                </button>
-              ))}
-            </ScrollArea>
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            )}
           </ResizablePanel>
         </ResizablePanelGroup>
       ) : (
-        <EmptyState onOpen={chooseRepo} busy={busy} />
+        <EmptyState onOpen={chooseRepo} onClone={() => setCloneOpen(true)} busy={busy} />
+      )}
+
+      {cloneOpen && (
+        <CloneDialog
+          onClose={() => setCloneOpen(false)}
+          onCloned={(p) => {
+            setCloneOpen(false);
+            void load(p);
+          }}
+        />
       )}
     </div>
   );
