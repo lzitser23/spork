@@ -1,4 +1,4 @@
-/** Compact "time ago" like Fork's date column (11d, 3h, 2mo). */
+/** Compact "time ago" for the commit date column (11d, 3h, 2mo). */
 export function relativeTime(unixSeconds: number): string {
   const s = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds));
   if (s < 60) return `${s}s`;

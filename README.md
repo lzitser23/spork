@@ -1,6 +1,6 @@
 # spork 🥄
 
-A small, native, **black + monospace** Git client — a free, build-it-yourself answer to [Fork](https://git-fork.com/).
+A small, fast, native Git client with a pure-black, all-monospace interface.
 
 Built with [Tauri 2](https://tauri.app/) (Rust) + React + TypeScript + [shadcn/ui](https://ui.shadcn.com/), styled pure-black with JetBrains Mono throughout.
 
