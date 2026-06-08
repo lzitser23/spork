@@ -1,28 +1,34 @@
 //! Thin wrappers around the system `git` CLI.
 //!
-//! Each command shells out to `git`, parses its porcelain output, and returns
-//! serde-serializable structs that the React frontend consumes via `invoke()`.
+//! Each command shells out to `git`, parses its porcelain/format output, and
+//! returns serde-serializable structs that the React frontend consumes via
+//! `invoke()`.
 
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
-/// ASCII unit separator — used between fields in our custom `--pretty`/`--format`
-/// strings because it can't appear in branch names, hashes, emails, or subjects.
+/// ASCII unit separator — used between fields in our custom format strings
+/// because it can't appear in branch names, hashes, emails, or subjects.
 const US: char = '\u{1f}';
-/// ASCII record separator — used between commits.
+/// ASCII record separator — used between records (e.g. commits).
 const RS: char = '\u{1e}';
 
 #[derive(Serialize)]
 pub struct RepoInfo {
-    /// Absolute path to the repository's top level.
     pub path: String,
-    /// Folder name of the top level (shown in the title bar / header).
     pub name: String,
-    /// Current branch, or "(detached)".
     pub branch: String,
-    /// Short hash of HEAD (empty for a repo with no commits yet).
     pub head: String,
+}
+
+/// A ref pointing at a commit (for the colored pills next to commits).
+#[derive(Serialize)]
+pub struct RefBadge {
+    pub name: String,
+    /// "head" (current branch), "branch", "remote", or "tag".
+    pub kind: String,
 }
 
 #[derive(Serialize)]
@@ -31,16 +37,14 @@ pub struct Commit {
     pub short_hash: String,
     pub author_name: String,
     pub author_email: String,
-    /// Author date as a Unix timestamp (seconds).
     pub timestamp: i64,
     pub subject: String,
+    pub refs: Vec<RefBadge>,
 }
 
 #[derive(Serialize)]
 pub struct StatusEntry {
-    /// Staged (index) status char from `git status --porcelain`.
     pub x: String,
-    /// Unstaged (work tree) status char.
     pub y: String,
     pub path: String,
 }
@@ -50,6 +54,47 @@ pub struct Branch {
     pub name: String,
     pub is_current: bool,
     pub upstream: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct Remote {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Serialize)]
+pub struct Stash {
+    pub index: usize,
+    pub reff: String,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct Person {
+    pub name: String,
+    pub email: String,
+    pub timestamp: i64,
+}
+
+#[derive(Serialize)]
+pub struct CommitDetails {
+    pub hash: String,
+    pub short_hash: String,
+    pub parents: Vec<String>,
+    pub author: Person,
+    pub committer: Person,
+    pub subject: String,
+    pub body: String,
+}
+
+#[derive(Serialize)]
+pub struct FileChange {
+    /// Single-letter status: A, M, D, R, C, T.
+    pub status: String,
+    pub path: String,
+    pub additions: i64,
+    pub deletions: i64,
+    pub binary: bool,
 }
 
 /// Run `git <args>` inside `repo` and return stdout, or stderr as the error.
@@ -97,6 +142,29 @@ fn resolve_toplevel(path: &str) -> Result<String, String> {
     Err("Not a Git repository — pick the project folder that contains .git, not .git itself".into())
 }
 
+/// Turn a `%D` decoration string ("HEAD -> main, origin/main, tag: v1") into badges.
+fn parse_refs(decoration: &str) -> Vec<RefBadge> {
+    let mut out = Vec::new();
+    for raw in decoration.split(", ") {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        if let Some(rest) = raw.strip_prefix("HEAD -> ") {
+            out.push(RefBadge { name: rest.to_string(), kind: "head".into() });
+        } else if raw == "HEAD" {
+            out.push(RefBadge { name: "HEAD".into(), kind: "head".into() });
+        } else if let Some(tag) = raw.strip_prefix("tag: ") {
+            out.push(RefBadge { name: tag.to_string(), kind: "tag".into() });
+        } else if raw.contains('/') {
+            out.push(RefBadge { name: raw.to_string(), kind: "remote".into() });
+        } else {
+            out.push(RefBadge { name: raw.to_string(), kind: "branch".into() });
+        }
+    }
+    out
+}
+
 /// Validate that `path` is a Git work tree and return basic info about it.
 #[tauri::command]
 pub fn open_repo(path: String) -> Result<RepoInfo, String> {
@@ -122,12 +190,7 @@ pub fn open_repo(path: String) -> Result<RepoInfo, String> {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| top.clone());
 
-    Ok(RepoInfo {
-        path: top,
-        name,
-        branch,
-        head,
-    })
+    Ok(RepoInfo { path: top, name, branch, head })
 }
 
 /// Return up to `limit` (default 200) most-recent commits reachable from HEAD.
@@ -137,8 +200,9 @@ pub fn git_log(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String
     if run_git(&path, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_err() {
         return Ok(Vec::new());
     }
+
     let n = limit.unwrap_or(200).to_string();
-    let fmt = format!("--pretty=format:%H{US}%h{US}%an{US}%ae{US}%at{US}%s{RS}");
+    let fmt = format!("--pretty=format:%H{US}%h{US}%an{US}%ae{US}%at{US}%D{US}%s{RS}");
     let out = run_git(&path, &["log", "-n", &n, &fmt])?;
 
     let mut commits = Vec::new();
@@ -148,7 +212,7 @@ pub fn git_log(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String
             continue;
         }
         let f: Vec<&str> = rec.split(US).collect();
-        if f.len() < 6 {
+        if f.len() < 7 {
             continue;
         }
         commits.push(Commit {
@@ -157,7 +221,8 @@ pub fn git_log(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String
             author_name: f[2].to_string(),
             author_email: f[3].to_string(),
             timestamp: f[4].parse().unwrap_or(0),
-            subject: f[5].to_string(),
+            refs: parse_refs(f[5]),
+            subject: f[6].to_string(),
         });
     }
     Ok(commits)
@@ -170,7 +235,6 @@ pub fn git_status(path: String) -> Result<Vec<StatusEntry>, String> {
 
     let mut entries = Vec::new();
     for line in out.lines() {
-        // Format is "XY PATH"; first two bytes are the status code, then a space.
         if line.len() < 4 {
             continue;
         }
@@ -198,8 +262,223 @@ pub fn git_branches(path: String) -> Result<Vec<Branch>, String> {
         branches.push(Branch {
             is_current: f[0] == "*",
             name: f[1].to_string(),
-            upstream: f.get(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+            upstream: f.get(2).copied().filter(|s| !s.is_empty()).map(|s| s.to_string()),
         });
     }
     Ok(branches)
+}
+
+/// Configured remotes (deduped to one fetch URL each).
+#[tauri::command]
+pub fn git_remotes(path: String) -> Result<Vec<Remote>, String> {
+    let out = run_git(&path, &["remote", "-v"])?;
+    let mut seen: HashMap<String, String> = HashMap::new();
+    for line in out.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[2] == "(fetch)" {
+            seen.entry(parts[0].to_string()).or_insert_with(|| parts[1].to_string());
+        }
+    }
+    let mut v: Vec<Remote> = seen.into_iter().map(|(name, url)| Remote { name, url }).collect();
+    v.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(v)
+}
+
+/// Tags, newest first.
+#[tauri::command]
+pub fn git_tags(path: String) -> Result<Vec<String>, String> {
+    let out = run_git(&path, &["tag", "--sort=-creatordate"])?;
+    Ok(out
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(200)
+        .map(|s| s.to_string())
+        .collect())
+}
+
+/// Stash entries.
+#[tauri::command]
+pub fn git_stashes(path: String) -> Result<Vec<Stash>, String> {
+    let fmt = format!("--format=%gd{US}%gs");
+    let out = run_git(&path, &["stash", "list", &fmt])?;
+    let mut v = Vec::new();
+    for (i, line) in out.lines().enumerate() {
+        let f: Vec<&str> = line.split(US).collect();
+        if f.is_empty() || f[0].is_empty() {
+            continue;
+        }
+        v.push(Stash {
+            index: i,
+            reff: f[0].to_string(),
+            message: f.get(1).copied().unwrap_or("").to_string(),
+        });
+    }
+    Ok(v)
+}
+
+/// Full metadata for a single commit.
+#[tauri::command]
+pub fn commit_details(path: String, hash: String) -> Result<CommitDetails, String> {
+    let fmt = format!(
+        "--format=%H{US}%h{US}%P{US}%an{US}%ae{US}%at{US}%cn{US}%ce{US}%ct{US}%s{US}%b"
+    );
+    let out = run_git(&path, &["show", "-s", &fmt, &hash])?;
+    let f: Vec<&str> = out.split(US).collect();
+    if f.len() < 11 {
+        return Err("unexpected git output for commit".into());
+    }
+    let parents = f[2].split_whitespace().map(|s| s.to_string()).collect();
+    Ok(CommitDetails {
+        hash: f[0].to_string(),
+        short_hash: f[1].to_string(),
+        parents,
+        author: Person {
+            name: f[3].to_string(),
+            email: f[4].to_string(),
+            timestamp: f[5].parse().unwrap_or(0),
+        },
+        committer: Person {
+            name: f[6].to_string(),
+            email: f[7].to_string(),
+            timestamp: f[8].parse().unwrap_or(0),
+        },
+        subject: f[9].to_string(),
+        body: f[10].trim_end().to_string(),
+    })
+}
+
+/// Files changed by a commit, with +/- line counts.
+#[tauri::command]
+pub fn commit_files(path: String, hash: String) -> Result<Vec<FileChange>, String> {
+    let numstat = run_git(
+        &path,
+        &["diff-tree", "--no-commit-id", "-r", "-M", "--root", "--numstat", &hash],
+    )?;
+    let mut nums: HashMap<String, (i64, i64, bool)> = HashMap::new();
+    for line in numstat.lines() {
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 3 {
+            continue;
+        }
+        let binary = cols[0] == "-";
+        let adds: i64 = cols[0].parse().unwrap_or(0);
+        let dels: i64 = cols[1].parse().unwrap_or(0);
+        let key = cols[cols.len() - 1].to_string();
+        nums.insert(key, (adds, dels, binary));
+    }
+
+    let name_status = run_git(
+        &path,
+        &["diff-tree", "--no-commit-id", "-r", "-M", "--root", "--name-status", &hash],
+    )?;
+    let mut out = Vec::new();
+    for line in name_status.lines() {
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 2 {
+            continue;
+        }
+        let status = cols[0].chars().next().unwrap_or('?').to_string();
+        let file = cols[cols.len() - 1].to_string();
+        let (additions, deletions, binary) = nums.get(&file).copied().unwrap_or((0, 0, false));
+        out.push(FileChange { status, path: file, additions, deletions, binary });
+    }
+    Ok(out)
+}
+
+/// The unified diff (patch) for a single file in a commit.
+#[tauri::command]
+pub fn file_diff(path: String, hash: String, file: String) -> Result<String, String> {
+    run_git(&path, &["show", "--format=", "-M", &hash, "--", &file])
+}
+
+/// Fetch from all remotes (prunes deleted branches).
+#[tauri::command]
+pub fn git_fetch(path: String) -> Result<String, String> {
+    run_git(&path, &["fetch", "--all", "--prune"])
+}
+
+/// Fast-forward pull.
+#[tauri::command]
+pub fn git_pull(path: String) -> Result<String, String> {
+    run_git(&path, &["pull", "--ff-only"])
+}
+
+/// Push the current branch.
+#[tauri::command]
+pub fn git_push(path: String) -> Result<String, String> {
+    run_git(&path, &["push"])
+}
+
+/// Stash the working-tree changes (`git stash`).
+#[tauri::command]
+pub fn git_stash(path: String) -> Result<String, String> {
+    run_git(&path, &["stash"])
+}
+
+/// Clone `url` into a new folder under `parent_dir`; returns the new repo path.
+///
+/// Authentication is delegated to the system git's credential helper (e.g. Git
+/// Credential Manager on Windows), so private GitHub repos trigger the normal
+/// browser sign-in / stored token — Spoon never handles credentials itself.
+#[tauri::command]
+pub fn git_clone(url: String, parent_dir: String) -> Result<String, String> {
+    let name = url
+        .trim()
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("repo")
+        .trim_end_matches(".git");
+    let name = if name.is_empty() { "repo" } else { name };
+    let target = Path::new(&parent_dir).join(name);
+    let target_str = target.to_string_lossy().into_owned();
+    run_git(&parent_dir, &["clone", &url, &target_str])?;
+    Ok(target_str)
+}
+
+/// Add a remote (e.g. `origin` -> a GitHub URL) to an existing repo.
+#[tauri::command]
+pub fn git_add_remote(path: String, name: String, url: String) -> Result<String, String> {
+    run_git(&path, &["remote", "add", &name, &url])
+}
+
+/// Contents of a working-tree file for the file browser.
+#[derive(Serialize)]
+pub struct FileContent {
+    pub text: String,
+    pub binary: bool,
+    pub too_large: bool,
+    pub size: u64,
+}
+
+/// List all tracked files (respects .gitignore) for the file tree.
+#[tauri::command]
+pub fn list_files(path: String) -> Result<Vec<String>, String> {
+    let out = run_git(&path, &["-c", "core.quotePath=false", "ls-files"])?;
+    Ok(out
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|s| s.to_string())
+        .collect())
+}
+
+/// Read a working-tree file's text content, guarding against binary / huge files.
+#[tauri::command]
+pub fn read_file(path: String, file: String) -> Result<FileContent, String> {
+    const LIMIT: u64 = 2_000_000;
+    let full = Path::new(&path).join(&file);
+    let size = std::fs::metadata(&full).map_err(|e| e.to_string())?.len();
+    if size > LIMIT {
+        return Ok(FileContent { text: String::new(), binary: false, too_large: true, size });
+    }
+    let bytes = std::fs::read(&full).map_err(|e| e.to_string())?;
+    if bytes.contains(&0u8) {
+        return Ok(FileContent { text: String::new(), binary: true, too_large: false, size });
+    }
+    Ok(FileContent {
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+        binary: false,
+        too_large: false,
+        size,
+    })
 }
