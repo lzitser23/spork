@@ -1,4 +1,4 @@
-# spoon 🥄
+# spork 🥄
 
 A small, native, **black + monospace** Git client — a free, build-it-yourself answer to [Fork](https://git-fork.com/).
 

@@ -419,7 +419,7 @@ pub fn git_stash(path: String) -> Result<String, String> {
 ///
 /// Authentication is delegated to the system git's credential helper (e.g. Git
 /// Credential Manager on Windows), so private GitHub repos trigger the normal
-/// browser sign-in / stored token — Spoon never handles credentials itself.
+/// browser sign-in / stored token — Spork never handles credentials itself.
 #[tauri::command]
 pub fn git_clone(url: String, parent_dir: String) -> Result<String, String> {
     let name = url
