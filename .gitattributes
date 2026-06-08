@@ -1,0 +1,7 @@
+# Normalize line endings: store and check out text files as LF everywhere.
+* text=auto eol=lf
+
+# Binary assets — never normalize.
+*.png binary
+*.ico binary
+*.icns binary
