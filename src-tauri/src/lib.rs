@@ -40,7 +40,12 @@ pub fn run() {
             git::add_to_gitignore,
             git::git_stash_pop,
             git::git_stash_apply,
-            git::git_stash_drop
+            git::git_stash_drop,
+            git::git_create_tag,
+            git::git_delete_tag,
+            git::git_remove_remote,
+            git::git_submodules,
+            git::git_submodule_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,5 @@
 import { useState, type MouseEvent, type ReactNode } from "react";
-import { Check, Minus, Plus } from "lucide-react";
+import { ArrowUp, Check, Minus, Plus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { statusStyle } from "@/lib/format";
@@ -129,7 +129,7 @@ export function ChangesView({
   onUnstage: (file: string) => void;
   onStageAll: () => void;
   onUnstageAll: () => void;
-  onCommit: (message: string, stageAll: boolean) => Promise<boolean>;
+  onCommit: (message: string, stageAll: boolean, push: boolean) => Promise<boolean>;
   onGitignore: (file: string) => void;
   busy: boolean;
 }) {
@@ -146,9 +146,9 @@ export function ChangesView({
   // all") so you can commit unstaged/untracked changes directly.
   const stageAll = staged.length === 0;
   const canCommit = !busy && (staged.length > 0 || unstaged.length > 0) && message.trim().length > 0;
-  const commit = async () => {
+  const runCommit = async (push: boolean) => {
     if (!canCommit) return;
-    const ok = await onCommit(message, stageAll);
+    const ok = await onCommit(message, stageAll, push);
     if (ok) setMessage("");
   };
 
@@ -223,18 +223,26 @@ export function ChangesView({
                 spellCheck={false}
                 className="w-full resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-[12px] outline-none placeholder:text-muted-foreground/40 focus:border-muted-foreground/40"
               />
-              <div className="mt-1.5 flex items-center gap-2">
-                <span className="text-[11px] text-muted-foreground/60">
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="mr-auto text-[11px] text-muted-foreground/60">
                   {staged.length > 0 ? `${staged.length} staged` : `${unstaged.length} unstaged`}
                 </span>
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="ml-auto"
+                  variant="ghost"
                   disabled={!canCommit}
-                  onClick={commit}
+                  onClick={() => runCommit(false)}
                 >
                   <Check /> {stageAll ? "Commit all" : "Commit"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!canCommit}
+                  onClick={() => runCommit(true)}
+                  title="Commit, then push to the remote"
+                >
+                  <ArrowUp /> Commit &amp; Push
                 </Button>
               </div>
             </div>

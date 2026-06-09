@@ -114,6 +114,16 @@ export const gitStashApply = (path: string, reff: string) =>
   invoke<string>("git_stash_apply", { path, reff });
 export const gitStashDrop = (path: string, reff: string) =>
   invoke<string>("git_stash_drop", { path, reff });
+export const gitCreateTag = (path: string, name: string) =>
+  invoke<string>("git_create_tag", { path, name });
+export const gitDeleteTag = (path: string, name: string) =>
+  invoke<string>("git_delete_tag", { path, name });
+export const gitRemoveRemote = (path: string, name: string) =>
+  invoke<string>("git_remove_remote", { path, name });
+export const gitSubmodules = (path: string) =>
+  invoke<string[]>("git_submodules", { path });
+export const gitSubmoduleUpdate = (path: string) =>
+  invoke<string>("git_submodule_update", { path });
 export const gitFetch = (path: string) => invoke<string>("git_fetch", { path });
 export const gitPull = (path: string) => invoke<string>("git_pull", { path });
 export const gitPush = (path: string) => invoke<string>("git_push", { path });

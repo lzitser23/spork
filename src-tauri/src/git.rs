@@ -456,10 +456,20 @@ pub fn git_pull(path: String) -> Result<String, String> {
     run_git(&path, &["pull", "--ff-only"])
 }
 
-/// Push the current branch.
+/// Push the current branch. If it has no upstream yet (e.g. a branch just
+/// created locally), publish it to `origin` and set up tracking.
 #[tauri::command]
 pub fn git_push(path: String) -> Result<String, String> {
-    run_git(&path, &["push"])
+    let has_upstream = run_git(
+        &path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    )
+    .is_ok();
+    if has_upstream {
+        run_git(&path, &["push"])
+    } else {
+        run_git(&path, &["push", "-u", "origin", "HEAD"])
+    }
 }
 
 /// Stash the working-tree changes (`git stash`).
@@ -592,6 +602,40 @@ pub fn git_stash_apply(path: String, reff: String) -> Result<String, String> {
 #[tauri::command]
 pub fn git_stash_drop(path: String, reff: String) -> Result<String, String> {
     run_git(&path, &["stash", "drop", &reff])
+}
+
+/// Create a lightweight tag at HEAD.
+#[tauri::command]
+pub fn git_create_tag(path: String, name: String) -> Result<String, String> {
+    run_git(&path, &["tag", &name])
+}
+
+/// Delete a tag.
+#[tauri::command]
+pub fn git_delete_tag(path: String, name: String) -> Result<String, String> {
+    run_git(&path, &["tag", "-d", &name])
+}
+
+/// Remove a configured remote.
+#[tauri::command]
+pub fn git_remove_remote(path: String, name: String) -> Result<String, String> {
+    run_git(&path, &["remote", "remove", &name])
+}
+
+/// Submodule paths (second column of `git submodule status`); empty if none.
+#[tauri::command]
+pub fn git_submodules(path: String) -> Result<Vec<String>, String> {
+    let out = run_git(&path, &["submodule", "status"])?;
+    Ok(out
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(1).map(String::from))
+        .collect())
+}
+
+/// Initialize and update all submodules recursively.
+#[tauri::command]
+pub fn git_submodule_update(path: String) -> Result<String, String> {
+    run_git(&path, &["submodule", "update", "--init", "--recursive"])
 }
 
 /// Clone `url` into a new folder under `parent_dir`; returns the new repo path.
