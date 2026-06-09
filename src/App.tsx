@@ -56,6 +56,12 @@ import {
   gitStashes,
   gitStatus,
   gitTags,
+  gitAddRemote,
+  gitCreateTag,
+  gitDeleteTag,
+  gitRemoveRemote,
+  gitSubmodules,
+  gitSubmoduleUpdate,
   openRepo,
   type Branch,
   type Commit,
@@ -110,6 +116,7 @@ export default function App() {
   const [commits, setCommits] = useState<Commit[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [remoteBranches, setRemoteBranches] = useState<string[]>([]);
+  const [submodules, setSubmodules] = useState<string[]>([]);
   const [status, setStatus] = useState<StatusEntry[]>([]);
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [tags, setTags] = useState<string[]>([]);
@@ -127,7 +134,7 @@ export default function App() {
     setError(null);
     try {
       const info = await openRepo(path);
-      const [log, br, rbr, st, rem, tg, stash] = await Promise.all([
+      const [log, br, rbr, st, rem, tg, stash, subs] = await Promise.all([
         gitLog(info.path, 300),
         gitBranches(info.path),
         gitRemoteBranches(info.path),
@@ -135,6 +142,7 @@ export default function App() {
         gitRemotes(info.path),
         gitTags(info.path),
         gitStashes(info.path),
+        gitSubmodules(info.path),
       ]);
       setRepo(info);
       setCommits(log);
@@ -144,6 +152,7 @@ export default function App() {
       setRemotes(rem);
       setTags(tg);
       setStashes(stash);
+      setSubmodules(subs);
       setSelectedHash(log[0]?.hash ?? null);
       setSelectedFile(null);
     } catch (e) {
@@ -214,6 +223,38 @@ export default function App() {
     [runAction],
   );
 
+  const createTag = useCallback(
+    (name: string) => {
+      const n = name.trim();
+      if (n) void runAction((p) => gitCreateTag(p, n), `tag ${n}`);
+    },
+    [runAction],
+  );
+  const deleteTag = useCallback(
+    (name: string) => void runAction((p) => gitDeleteTag(p, name), `delete tag ${name}`),
+    [runAction],
+  );
+  const checkoutTag = useCallback(
+    (name: string) => void runAction((p) => gitCheckout(p, name), `checkout ${name}`),
+    [runAction],
+  );
+  const addRemote = useCallback(
+    (name: string, url: string) => {
+      const n = name.trim();
+      const u = url.trim();
+      if (n && u) void runAction((p) => gitAddRemote(p, n, u), `add remote ${n}`);
+    },
+    [runAction],
+  );
+  const removeRemote = useCallback(
+    (name: string) => void runAction((p) => gitRemoveRemote(p, name), `remove remote ${name}`),
+    [runAction],
+  );
+  const submoduleUpdate = useCallback(
+    () => void runAction(gitSubmoduleUpdate, "submodule update"),
+    [runAction],
+  );
+
   const stage = useCallback(
     (file: string) => void runAction((p) => gitStage(p, file), "stage"),
     [runAction],
@@ -229,20 +270,30 @@ export default function App() {
   );
 
   const commit = useCallback(
-    async (message: string, stageAll: boolean): Promise<boolean> => {
+    async (message: string, stageAll: boolean, push: boolean): Promise<boolean> => {
       if (!repo) return false;
       setBusy(true);
       setError(null);
       try {
         if (stageAll) await gitCommitAll(repo.path, message);
         else await gitCommit(repo.path, message);
-        await load(repo.path);
-        return true;
       } catch (e) {
         setError(`commit: ${String(e)}`);
         setBusy(false);
         return false;
       }
+      // The commit succeeded; an optional push failing shouldn't undo it.
+      let pushErr: string | null = null;
+      if (push) {
+        try {
+          await gitPush(repo.path);
+        } catch (e) {
+          pushErr = `push: ${String(e)}`;
+        }
+      }
+      await load(repo.path); // reflect the new commit (this also clears the error)
+      if (pushErr) setError(pushErr); // ...so re-surface a push failure after it
+      return true;
     },
     [repo, load],
   );
@@ -371,10 +422,17 @@ export default function App() {
                 tags={tags}
                 stashes={stashes}
                 remoteBranches={remoteBranches}
+                submodules={submodules}
                 onCheckoutBranch={checkoutBranch}
                 onCreateBranch={createBranch}
                 onDeleteBranch={deleteBranch}
                 onCheckoutRemote={checkoutRemote}
+                onCreateTag={createTag}
+                onDeleteTag={deleteTag}
+                onCheckoutTag={checkoutTag}
+                onAddRemote={addRemote}
+                onRemoveRemote={removeRemote}
+                onSubmoduleUpdate={submoduleUpdate}
                 onStashPop={stashPop}
                 onStashApply={stashApply}
                 onStashDrop={stashDrop}
