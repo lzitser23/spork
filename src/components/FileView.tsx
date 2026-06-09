@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { readFile, type FileContent } from "@/lib/git";
+import { highlightLines, langForPath, type Token } from "@/lib/highlight";
 
 export function FileView({
   repoPath,
@@ -11,6 +12,7 @@ export function FileView({
 }) {
   const [content, setContent] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<Token[][] | null>(null);
 
   useEffect(() => {
     if (!file) {
@@ -31,6 +33,22 @@ export function FileView({
       cancelled = true;
     };
   }, [repoPath, file]);
+
+  // Highlight asynchronously once the text is loaded; plain text shows until
+  // (and unless) tokens arrive.
+  useEffect(() => {
+    setTokens(null);
+    if (!file || !content || content.binary || content.too_large) return;
+    const lang = langForPath(file);
+    if (!lang) return;
+    let cancelled = false;
+    highlightLines(content.text.replace(/\n$/, ""), lang).then((t) => {
+      if (!cancelled) setTokens(t);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [content, file]);
 
   if (!file)
     return (
@@ -54,6 +72,8 @@ export function FileView({
     );
 
   const lines = content.text.replace(/\n$/, "").split("\n");
+  const hl = tokens && tokens.length === lines.length ? tokens : null;
+
   return (
     <div className="h-full overflow-auto text-[12px] leading-[1.5]">
       <div className="flex min-w-max">
@@ -65,7 +85,19 @@ export function FileView({
         <div className="pr-4">
           {lines.map((l, i) => (
             <div key={i} className="whitespace-pre">
-              {l || " "}
+              {hl ? (
+                hl[i].length ? (
+                  hl[i].map((t, j) => (
+                    <span key={j} style={{ color: t.color }}>
+                      {t.content}
+                    </span>
+                  ))
+                ) : (
+                  " "
+                )
+              ) : (
+                l || " "
+              )}
             </div>
           ))}
         </div>

@@ -20,6 +20,8 @@ export interface Commit {
   author_email: string;
   timestamp: number;
   subject: string;
+  /** Parent commit hashes (full). Empty for the root; >1 for a merge. */
+  parents: string[];
   refs: RefBadge[];
 }
 
@@ -84,6 +86,44 @@ export const commitFiles = (path: string, hash: string) =>
   invoke<FileChange[]>("commit_files", { path, hash });
 export const fileDiff = (path: string, hash: string, file: string) =>
   invoke<string>("file_diff", { path, hash, file });
+export const workingDiff = (path: string, file: string) =>
+  invoke<string>("working_diff", { path, file });
+export const gitCheckout = (path: string, name: string) =>
+  invoke<string>("git_checkout", { path, name });
+export const gitStage = (path: string, file: string) =>
+  invoke<string>("git_stage", { path, file });
+export const gitUnstage = (path: string, file: string) =>
+  invoke<string>("git_unstage", { path, file });
+export const gitStageAll = (path: string) => invoke<string>("git_stage_all", { path });
+export const gitUnstageAll = (path: string) => invoke<string>("git_unstage_all", { path });
+export const gitCommit = (path: string, message: string) =>
+  invoke<string>("git_commit", { path, message });
+export const gitCreateBranch = (path: string, name: string) =>
+  invoke<string>("git_create_branch", { path, name });
+export const gitDeleteBranch = (path: string, name: string, force = false) =>
+  invoke<string>("git_delete_branch", { path, name, force });
+export const gitRemoteBranches = (path: string) =>
+  invoke<string[]>("git_remote_branches", { path });
+export const gitCommitAll = (path: string, message: string) =>
+  invoke<string>("git_commit_all", { path, message });
+export const addToGitignore = (path: string, file: string) =>
+  invoke<string>("add_to_gitignore", { path, file });
+export const gitStashPop = (path: string, reff: string) =>
+  invoke<string>("git_stash_pop", { path, reff });
+export const gitStashApply = (path: string, reff: string) =>
+  invoke<string>("git_stash_apply", { path, reff });
+export const gitStashDrop = (path: string, reff: string) =>
+  invoke<string>("git_stash_drop", { path, reff });
+export const gitCreateTag = (path: string, name: string) =>
+  invoke<string>("git_create_tag", { path, name });
+export const gitDeleteTag = (path: string, name: string) =>
+  invoke<string>("git_delete_tag", { path, name });
+export const gitRemoveRemote = (path: string, name: string) =>
+  invoke<string>("git_remove_remote", { path, name });
+export const gitSubmodules = (path: string) =>
+  invoke<string[]>("git_submodules", { path });
+export const gitSubmoduleUpdate = (path: string) =>
+  invoke<string>("git_submodule_update", { path });
 export const gitFetch = (path: string) => invoke<string>("git_fetch", { path });
 export const gitPull = (path: string) => invoke<string>("git_pull", { path });
 export const gitPush = (path: string) => invoke<string>("git_push", { path });
