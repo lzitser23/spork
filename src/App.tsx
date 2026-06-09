@@ -1,6 +1,7 @@
-import { useCallback, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen } from "@tauri-apps/api/event";
 import {
   Archive,
   ArrowDown,
@@ -41,8 +42,11 @@ import {
   gitStatus,
   gitTags,
   openRepo,
+  startRepoWatch,
+  stopRepoWatch,
   type Branch,
   type Commit,
+  type RepoChangedPayload,
   type Remote,
   type RepoInfo,
   type Stash,
@@ -102,33 +106,60 @@ export default function App() {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadingPathRef = useRef<string | null>(null);
+  const queuedLoadRef = useRef<string | null>(null);
+  const selectedHashRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedHashRef.current = selectedHash;
+  }, [selectedHash]);
 
   const load = useCallback(async (path: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const info = await openRepo(path);
-      const [log, br, st, rem, tg, stash] = await Promise.all([
-        gitLog(info.path, 300),
-        gitBranches(info.path),
-        gitStatus(info.path),
-        gitRemotes(info.path),
-        gitTags(info.path),
-        gitStashes(info.path),
-      ]);
-      setRepo(info);
-      setCommits(log);
-      setBranches(br);
-      setStatus(st);
-      setRemotes(rem);
-      setTags(tg);
-      setStashes(stash);
-      setSelectedHash(log[0]?.hash ?? null);
-      setSelectedFile(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
+    if (loadingPathRef.current) {
+      queuedLoadRef.current = path;
+      return;
+    }
+
+    let nextPath: string | null = path;
+    while (nextPath) {
+      const currentPath = nextPath;
+      nextPath = null;
+      queuedLoadRef.current = null;
+      loadingPathRef.current = currentPath;
+      setBusy(true);
+      setError(null);
+      try {
+        const info = await openRepo(currentPath);
+        const [log, br, st, rem, tg, stash] = await Promise.all([
+          gitLog(info.path, 300),
+          gitBranches(info.path),
+          gitStatus(info.path),
+          gitRemotes(info.path),
+          gitTags(info.path),
+          gitStashes(info.path),
+        ]);
+        setRepo(info);
+        setCommits(log);
+        setBranches(br);
+        setStatus(st);
+        setRemotes(rem);
+        setTags(tg);
+        setStashes(stash);
+        const previousSelectedHash = selectedHashRef.current;
+        const nextSelectedHash =
+          previousSelectedHash && log.some((commit) => commit.hash === previousSelectedHash)
+            ? previousSelectedHash
+            : log[0]?.hash ?? null;
+        setSelectedHash(nextSelectedHash);
+        if (nextSelectedHash !== previousSelectedHash) setSelectedFile(null);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        loadingPathRef.current = null;
+        setBusy(false);
+        nextPath = queuedLoadRef.current;
+        queuedLoadRef.current = null;
+      }
     }
   }, []);
 
@@ -164,6 +195,38 @@ export default function App() {
   const originRemote = remotes.find((r) => r.name === "origin") ?? remotes[0];
   const webUrl = originRemote ? remoteWebUrl(originRemote.url) : null;
   const hostLabel = (originRemote && remoteHostLabel(originRemote.url)) || "Web";
+  const repoPath = repo?.path ?? null;
+
+  useEffect(() => {
+    if (!repoPath) {
+      void stopRepoWatch().catch(() => {});
+      return;
+    }
+
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    startRepoWatch(repoPath).catch((e) => {
+      if (!cancelled) setError(`watch: ${String(e)}`);
+    });
+
+    listen<RepoChangedPayload>("repo_changed", (event) => {
+      if (event.payload.path === repoPath) void load(repoPath);
+    })
+      .then((dispose) => {
+        if (cancelled) dispose();
+        else unlisten = dispose;
+      })
+      .catch((e) => {
+        if (!cancelled) setError(`watch: ${String(e)}`);
+      });
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+      void stopRepoWatch().catch(() => {});
+    };
+  }, [repoPath, load]);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-[13px] text-foreground">
@@ -281,6 +344,7 @@ export default function App() {
                     commits={commits}
                     selected={selectedHash}
                     onSelect={(h) => {
+                      selectedHashRef.current = h;
                       setSelectedHash(h);
                       setSelectedFile(null);
                     }}

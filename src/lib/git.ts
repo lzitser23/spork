@@ -92,6 +92,12 @@ export const gitClone = (url: string, parentDir: string) =>
   invoke<string>("git_clone", { url, parentDir });
 export const gitAddRemote = (path: string, name: string, url: string) =>
   invoke<string>("git_add_remote", { path, name, url });
+export const startRepoWatch = (path: string) => invoke<void>("start_repo_watch", { path });
+export const stopRepoWatch = () => invoke<void>("stop_repo_watch");
+
+export interface RepoChangedPayload {
+  path: string;
+}
 
 export interface FileContent {
   text: string;
