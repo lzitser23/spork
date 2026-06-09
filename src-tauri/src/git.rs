@@ -39,6 +39,8 @@ pub struct Commit {
     pub author_email: String,
     pub timestamp: i64,
     pub subject: String,
+    /// Parent commit hashes (full). Empty for the root; >1 for a merge.
+    pub parents: Vec<String>,
     pub refs: Vec<RefBadge>,
 }
 
@@ -114,6 +116,27 @@ fn run_git(repo: &str, args: &[&str]) -> Result<String, String> {
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Like [`run_git`], but tolerant of exit code 1 — which `git diff` (and
+/// `git diff --no-index`) use to mean "there were differences", not failure.
+fn run_git_diff(repo: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to launch git: {e}"))?;
+    match output.status.code() {
+        Some(0) | Some(1) => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
+        _ => {
+            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(if err.is_empty() {
+                format!("git {} failed", args.join(" "))
+            } else {
+                err
+            })
+        }
+    }
 }
 
 /// Resolve the work-tree root for a user-selected path.
@@ -202,8 +225,11 @@ pub fn git_log(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String
     }
 
     let n = limit.unwrap_or(200).to_string();
-    let fmt = format!("--pretty=format:%H{US}%h{US}%an{US}%ae{US}%at{US}%D{US}%s{RS}");
-    let out = run_git(&path, &["log", "-n", &n, &fmt])?;
+    let fmt = format!("--pretty=format:%H{US}%h{US}%an{US}%ae{US}%at{US}%P{US}%D{US}%s{RS}");
+    // `--date-order` keeps commits in commit-date order while still guaranteeing
+    // that no parent is shown before all of its children — exactly the ordering
+    // the lane-assignment algorithm relies on for a clean graph.
+    let out = run_git(&path, &["log", "--date-order", "-n", &n, &fmt])?;
 
     let mut commits = Vec::new();
     for record in out.split(RS) {
@@ -212,7 +238,7 @@ pub fn git_log(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String
             continue;
         }
         let f: Vec<&str> = rec.split(US).collect();
-        if f.len() < 7 {
+        if f.len() < 8 {
             continue;
         }
         commits.push(Commit {
@@ -221,8 +247,9 @@ pub fn git_log(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String
             author_name: f[2].to_string(),
             author_email: f[3].to_string(),
             timestamp: f[4].parse().unwrap_or(0),
-            refs: parse_refs(f[5]),
-            subject: f[6].to_string(),
+            parents: f[5].split_whitespace().map(|s| s.to_string()).collect(),
+            refs: parse_refs(f[6]),
+            subject: f[7].to_string(),
         });
     }
     Ok(commits)
@@ -350,9 +377,12 @@ pub fn commit_details(path: String, hash: String) -> Result<CommitDetails, Strin
 /// Files changed by a commit, with +/- line counts.
 #[tauri::command]
 pub fn commit_files(path: String, hash: String) -> Result<Vec<FileChange>, String> {
+    // `-m --first-parent` makes merge commits show their diff against the first
+    // parent (otherwise diff-tree yields nothing for a merge); harmless for
+    // ordinary commits. `--root` covers the initial commit.
     let numstat = run_git(
         &path,
-        &["diff-tree", "--no-commit-id", "-r", "-M", "--root", "--numstat", &hash],
+        &["diff-tree", "--no-commit-id", "-r", "-M", "-m", "--first-parent", "--root", "--numstat", &hash],
     )?;
     let mut nums: HashMap<String, (i64, i64, bool)> = HashMap::new();
     for line in numstat.lines() {
@@ -369,7 +399,7 @@ pub fn commit_files(path: String, hash: String) -> Result<Vec<FileChange>, Strin
 
     let name_status = run_git(
         &path,
-        &["diff-tree", "--no-commit-id", "-r", "-M", "--root", "--name-status", &hash],
+        &["diff-tree", "--no-commit-id", "-r", "-M", "-m", "--first-parent", "--root", "--name-status", &hash],
     )?;
     let mut out = Vec::new();
     for line in name_status.lines() {
@@ -388,7 +418,30 @@ pub fn commit_files(path: String, hash: String) -> Result<Vec<FileChange>, Strin
 /// The unified diff (patch) for a single file in a commit.
 #[tauri::command]
 pub fn file_diff(path: String, hash: String, file: String) -> Result<String, String> {
-    run_git(&path, &["show", "--format=", "-M", &hash, "--", &file])
+    // `-m --first-parent` so a file's diff inside a merge commit resolves against
+    // the first parent (matching the merge file list); a no-op for normal commits.
+    run_git(&path, &["show", "--format=", "-M", "-m", "--first-parent", &hash, "--", &file])
+}
+
+/// The working-tree diff for a single file: everything that differs from HEAD
+/// (staged and unstaged combined). Untracked files render as all-additions.
+#[tauri::command]
+pub fn working_diff(path: String, file: String) -> Result<String, String> {
+    // A staged rename appears in status as "old -> new"; diff the new path.
+    let file = file.rsplit(" -> ").next().unwrap_or(&file).to_string();
+
+    let tracked = run_git(&path, &["ls-files", "--error-unmatch", "--", &file]).is_ok();
+    if !tracked {
+        // Untracked: diff against the empty file so the whole thing reads as added.
+        return run_git_diff(&path, &["diff", "--no-index", "--", "/dev/null", &file]);
+    }
+    let has_head = run_git(&path, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok();
+    if has_head {
+        run_git_diff(&path, &["diff", "HEAD", "--", &file])
+    } else {
+        // Unborn HEAD (no commits yet): the only diff is what's staged.
+        run_git_diff(&path, &["diff", "--cached", "--", &file])
+    }
 }
 
 /// Fetch from all remotes (prunes deleted branches).
@@ -403,16 +456,186 @@ pub fn git_pull(path: String) -> Result<String, String> {
     run_git(&path, &["pull", "--ff-only"])
 }
 
-/// Push the current branch.
+/// Push the current branch. If it has no upstream yet (e.g. a branch just
+/// created locally), publish it to `origin` and set up tracking.
 #[tauri::command]
 pub fn git_push(path: String) -> Result<String, String> {
-    run_git(&path, &["push"])
+    let has_upstream = run_git(
+        &path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    )
+    .is_ok();
+    if has_upstream {
+        run_git(&path, &["push"])
+    } else {
+        run_git(&path, &["push", "-u", "origin", "HEAD"])
+    }
 }
 
 /// Stash the working-tree changes (`git stash`).
 #[tauri::command]
 pub fn git_stash(path: String) -> Result<String, String> {
     run_git(&path, &["stash"])
+}
+
+/// Switch to an existing branch (or any ref). Fails if local changes would be
+/// overwritten — that error is surfaced to the UI.
+#[tauri::command]
+pub fn git_checkout(path: String, name: String) -> Result<String, String> {
+    run_git(&path, &["checkout", &name])
+}
+
+/// Stage one path (`git add` — handles new, modified, and deleted files).
+#[tauri::command]
+pub fn git_stage(path: String, file: String) -> Result<String, String> {
+    let file = file.rsplit(" -> ").next().unwrap_or(&file).to_string();
+    run_git(&path, &["add", "--", &file])
+}
+
+/// Stage everything (tracked edits, deletions, and untracked files).
+#[tauri::command]
+pub fn git_stage_all(path: String) -> Result<String, String> {
+    run_git(&path, &["add", "-A"])
+}
+
+/// Unstage one path.
+#[tauri::command]
+pub fn git_unstage(path: String, file: String) -> Result<String, String> {
+    let file = file.rsplit(" -> ").next().unwrap_or(&file).to_string();
+    if run_git(&path, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok() {
+        run_git(&path, &["reset", "-q", "HEAD", "--", &file])
+    } else {
+        // Unborn HEAD: nothing to reset against — just drop it from the index.
+        run_git(&path, &["rm", "-q", "--cached", "--", &file])
+    }
+}
+
+/// Unstage everything.
+#[tauri::command]
+pub fn git_unstage_all(path: String) -> Result<String, String> {
+    if run_git(&path, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok() {
+        run_git(&path, &["reset", "-q"])
+    } else {
+        run_git(&path, &["rm", "-q", "--cached", "-r", "--", "."])
+    }
+}
+
+/// Commit the staged changes. Author identity comes from the user's git config;
+/// an empty message or empty index makes git error, which surfaces to the UI.
+#[tauri::command]
+pub fn git_commit(path: String, message: String) -> Result<String, String> {
+    run_git(&path, &["commit", "-m", &message])
+}
+
+/// Create a new branch from the current HEAD and switch to it.
+#[tauri::command]
+pub fn git_create_branch(path: String, name: String) -> Result<String, String> {
+    run_git(&path, &["checkout", "-b", &name])
+}
+
+/// Delete a branch. `force` uses `-D` (drops unmerged work); otherwise `-d`
+/// refuses to delete a branch that isn't fully merged.
+#[tauri::command]
+pub fn git_delete_branch(path: String, name: String, force: bool) -> Result<String, String> {
+    let flag = if force { "-D" } else { "-d" };
+    run_git(&path, &["branch", flag, &name])
+}
+
+/// Remote-tracking branches (e.g. `origin/main`), excluding the `*/HEAD` alias.
+#[tauri::command]
+pub fn git_remote_branches(path: String) -> Result<Vec<String>, String> {
+    let out = run_git(&path, &["for-each-ref", "--format=%(refname:short)", "refs/remotes"])?;
+    Ok(out
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.ends_with("/HEAD"))
+        .map(|s| s.to_string())
+        .collect())
+}
+
+/// Stage everything, then commit — the one-shot path for committing unstaged /
+/// untracked changes directly without staging them first.
+#[tauri::command]
+pub fn git_commit_all(path: String, message: String) -> Result<String, String> {
+    run_git(&path, &["add", "-A"])?;
+    run_git(&path, &["commit", "-m", &message])
+}
+
+/// Append a path to the repo's `.gitignore` (creating it if needed), skipping
+/// duplicates. Returns the entry written.
+#[tauri::command]
+pub fn add_to_gitignore(path: String, file: String) -> Result<String, String> {
+    // A staged rename shows up as "old -> new"; ignore the new path.
+    let file = file.rsplit(" -> ").next().unwrap_or(&file).to_string();
+    let entry = file.trim();
+    if entry.is_empty() {
+        return Err("nothing to ignore".into());
+    }
+    let gitignore = Path::new(&path).join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    if existing.lines().any(|l| l.trim() == entry) {
+        return Ok(entry.to_string()); // already ignored
+    }
+    let mut content = existing;
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(entry);
+    content.push('\n');
+    std::fs::write(&gitignore, content).map_err(|e| e.to_string())?;
+    Ok(entry.to_string())
+}
+
+/// Pop a stash (apply it and drop it).
+#[tauri::command]
+pub fn git_stash_pop(path: String, reff: String) -> Result<String, String> {
+    run_git(&path, &["stash", "pop", &reff])
+}
+
+/// Apply a stash, keeping it in the stash list.
+#[tauri::command]
+pub fn git_stash_apply(path: String, reff: String) -> Result<String, String> {
+    run_git(&path, &["stash", "apply", &reff])
+}
+
+/// Drop (delete) a stash without applying it.
+#[tauri::command]
+pub fn git_stash_drop(path: String, reff: String) -> Result<String, String> {
+    run_git(&path, &["stash", "drop", &reff])
+}
+
+/// Create a lightweight tag at HEAD.
+#[tauri::command]
+pub fn git_create_tag(path: String, name: String) -> Result<String, String> {
+    run_git(&path, &["tag", &name])
+}
+
+/// Delete a tag.
+#[tauri::command]
+pub fn git_delete_tag(path: String, name: String) -> Result<String, String> {
+    run_git(&path, &["tag", "-d", &name])
+}
+
+/// Remove a configured remote.
+#[tauri::command]
+pub fn git_remove_remote(path: String, name: String) -> Result<String, String> {
+    run_git(&path, &["remote", "remove", &name])
+}
+
+/// Submodule paths (second column of `git submodule status`); empty if none.
+#[tauri::command]
+pub fn git_submodules(path: String) -> Result<Vec<String>, String> {
+    let out = run_git(&path, &["submodule", "status"])?;
+    Ok(out
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(1).map(String::from))
+        .collect())
+}
+
+/// Initialize and update all submodules recursively.
+#[tauri::command]
+pub fn git_submodule_update(path: String) -> Result<String, String> {
+    run_git(&path, &["submodule", "update", "--init", "--recursive"])
 }
 
 /// Clone `url` into a new folder under `parent_dir`; returns the new repo path.
