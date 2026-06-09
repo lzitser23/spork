@@ -322,13 +322,10 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-[13px] text-foreground">
+      {repo && (
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        <SporkLogo size={18} className="shrink-0 rounded-[4px]" />
-        <span className="font-semibold tracking-tight text-foreground">spork</span>
-
         {repo && (
           <>
-            <Separator orientation="vertical" className="h-4" />
             <span className="text-foreground">{repo.name}</span>
             <Badge variant="outline" className="gap-1 font-normal">
               <GitBranch className="size-3" />
@@ -397,6 +394,7 @@ export default function App() {
           </Hint>
         </div>
       </header>
+      )}
 
       {error && (
         <div className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-destructive">
