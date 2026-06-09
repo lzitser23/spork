@@ -27,11 +27,27 @@ import { Sidebar, type View } from "@/components/Sidebar";
 import { CommitList } from "@/components/CommitList";
 import { CommitDetail } from "@/components/CommitDetail";
 import { DiffView } from "@/components/DiffView";
+import { ChangesView } from "@/components/ChangesView";
 import { FileBrowser } from "@/components/FileBrowser";
 import { CloneDialog } from "@/components/CloneDialog";
+import { SporkLogo } from "@/components/SporkLogo";
 import { remoteHostLabel, remoteWebUrl } from "@/lib/remote";
 import {
+  addToGitignore,
   gitBranches,
+  gitCheckout,
+  gitCommit,
+  gitCommitAll,
+  gitCreateBranch,
+  gitDeleteBranch,
+  gitRemoteBranches,
+  gitStage,
+  gitStageAll,
+  gitStashApply,
+  gitStashDrop,
+  gitStashPop,
+  gitUnstage,
+  gitUnstageAll,
   gitFetch,
   gitLog,
   gitPull,
@@ -41,6 +57,12 @@ import {
   gitStashes,
   gitStatus,
   gitTags,
+  gitAddRemote,
+  gitCreateTag,
+  gitDeleteTag,
+  gitRemoveRemote,
+  gitSubmodules,
+  gitSubmoduleUpdate,
   openRepo,
   startRepoWatch,
   stopRepoWatch,
@@ -74,8 +96,9 @@ function EmptyState({
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
-      <div>
-        <div className="text-3xl font-semibold tracking-tight">spork</div>
+      <div className="flex flex-col items-center">
+        <SporkLogo size={76} className="drop-shadow-[0_16px_32px_rgba(0,0,0,0.5)]" />
+        <div className="mt-4 text-3xl font-semibold tracking-tight">spork</div>
         <div className="mt-1.5 text-sm text-muted-foreground">
           a small, black, monospace git client
         </div>
@@ -96,12 +119,15 @@ export default function App() {
   const [repo, setRepo] = useState<RepoInfo | null>(null);
   const [commits, setCommits] = useState<Commit[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [remoteBranches, setRemoteBranches] = useState<string[]>([]);
+  const [submodules, setSubmodules] = useState<string[]>([]);
   const [status, setStatus] = useState<StatusEntry[]>([]);
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [stashes, setStashes] = useState<Stash[]>([]);
   const [selectedHash, setSelectedHash] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [view, setView] = useState<View>("history");
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -192,6 +218,131 @@ export default function App() {
     [repo, load],
   );
 
+  const checkoutBranch = useCallback(
+    (name: string) => {
+      void runAction((p) => gitCheckout(p, name), `checkout ${name}`);
+    },
+    [runAction],
+  );
+
+  const createBranch = useCallback(
+    (name: string) => {
+      const n = name.trim();
+      if (n) void runAction((p) => gitCreateBranch(p, n), `create ${n}`);
+    },
+    [runAction],
+  );
+
+  const deleteBranch = useCallback(
+    (name: string) => {
+      void runAction((p) => gitDeleteBranch(p, name), `delete ${name}`);
+    },
+    [runAction],
+  );
+
+  const checkoutRemote = useCallback(
+    (remoteRef: string) => {
+      // Strip the remote name → DWIM short name; git creates/switches a local
+      // branch tracking the remote.
+      const short = remoteRef.replace(/^[^/]+\//, "");
+      void runAction((p) => gitCheckout(p, short), `checkout ${short}`);
+    },
+    [runAction],
+  );
+
+  const createTag = useCallback(
+    (name: string) => {
+      const n = name.trim();
+      if (n) void runAction((p) => gitCreateTag(p, n), `tag ${n}`);
+    },
+    [runAction],
+  );
+  const deleteTag = useCallback(
+    (name: string) => void runAction((p) => gitDeleteTag(p, name), `delete tag ${name}`),
+    [runAction],
+  );
+  const checkoutTag = useCallback(
+    (name: string) => void runAction((p) => gitCheckout(p, name), `checkout ${name}`),
+    [runAction],
+  );
+  const addRemote = useCallback(
+    (name: string, url: string) => {
+      const n = name.trim();
+      const u = url.trim();
+      if (n && u) void runAction((p) => gitAddRemote(p, n, u), `add remote ${n}`);
+    },
+    [runAction],
+  );
+  const removeRemote = useCallback(
+    (name: string) => void runAction((p) => gitRemoveRemote(p, name), `remove remote ${name}`),
+    [runAction],
+  );
+  const submoduleUpdate = useCallback(
+    () => void runAction(gitSubmoduleUpdate, "submodule update"),
+    [runAction],
+  );
+
+  const stage = useCallback(
+    (file: string) => void runAction((p) => gitStage(p, file), "stage"),
+    [runAction],
+  );
+  const unstage = useCallback(
+    (file: string) => void runAction((p) => gitUnstage(p, file), "unstage"),
+    [runAction],
+  );
+  const stageAll = useCallback(() => void runAction(gitStageAll, "stage all"), [runAction]);
+  const unstageAll = useCallback(
+    () => void runAction(gitUnstageAll, "unstage all"),
+    [runAction],
+  );
+
+  const commit = useCallback(
+    async (message: string, stageAll: boolean, push: boolean): Promise<boolean> => {
+      if (!repo) return false;
+      setBusy(true);
+      setError(null);
+      try {
+        if (stageAll) await gitCommitAll(repo.path, message);
+        else await gitCommit(repo.path, message);
+      } catch (e) {
+        setError(`commit: ${String(e)}`);
+        setBusy(false);
+        return false;
+      }
+      // The commit succeeded; an optional push failing shouldn't undo it.
+      let pushErr: string | null = null;
+      if (push) {
+        try {
+          await gitPush(repo.path);
+        } catch (e) {
+          pushErr = `push: ${String(e)}`;
+        }
+      }
+      await load(repo.path); // reflect the new commit (this also clears the error)
+      if (pushErr) setError(pushErr); // ...so re-surface a push failure after it
+      return true;
+    },
+    [repo, load],
+  );
+
+  const gitignore = useCallback(
+    (file: string) => void runAction((p) => addToGitignore(p, file), "add to .gitignore"),
+    [runAction],
+  );
+
+  const stashPop = useCallback(
+    (s: Stash) => void runAction((p) => gitStashPop(p, s.reff), "stash pop"),
+    [runAction],
+  );
+  const stashApply = useCallback(
+    (s: Stash) => void runAction((p) => gitStashApply(p, s.reff), "stash apply"),
+    [runAction],
+  );
+  const stashDrop = useCallback(
+    (s: Stash) => void runAction((p) => gitStashDrop(p, s.reff), "stash drop"),
+    [runAction],
+  );
+
   const originRemote = remotes.find((r) => r.name === "origin") ?? remotes[0];
   const webUrl = originRemote ? remoteWebUrl(originRemote.url) : null;
   const hostLabel = (originRemote && remoteHostLabel(originRemote.url)) || "Web";
@@ -230,12 +381,10 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-[13px] text-foreground">
+      {repo && (
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className="font-semibold tracking-tight text-muted-foreground">spork</span>
-
         {repo && (
           <>
-            <Separator orientation="vertical" className="h-4" />
             <span className="text-foreground">{repo.name}</span>
             <Badge variant="outline" className="gap-1 font-normal">
               <GitBranch className="size-3" />
@@ -304,6 +453,7 @@ export default function App() {
           </Hint>
         </div>
       </header>
+      )}
 
       {error && (
         <div className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-destructive">
@@ -328,6 +478,22 @@ export default function App() {
                 remotes={remotes}
                 tags={tags}
                 stashes={stashes}
+                remoteBranches={remoteBranches}
+                submodules={submodules}
+                onCheckoutBranch={checkoutBranch}
+                onCreateBranch={createBranch}
+                onDeleteBranch={deleteBranch}
+                onCheckoutRemote={checkoutRemote}
+                onCreateTag={createTag}
+                onDeleteTag={deleteTag}
+                onCheckoutTag={checkoutTag}
+                onAddRemote={addRemote}
+                onRemoveRemote={removeRemote}
+                onSubmoduleUpdate={submoduleUpdate}
+                onStashPop={stashPop}
+                onStashApply={stashApply}
+                onStashDrop={stashDrop}
+                busy={busy}
               />
             </div>
           </ResizablePanel>
@@ -336,7 +502,21 @@ export default function App() {
 
           <ResizablePanel>
             {view === "files" ? (
-              <FileBrowser repoPath={repo.path} />
+              <FileBrowser repoPath={repo.path} onGitignore={gitignore} />
+            ) : view === "changes" ? (
+              <ChangesView
+                repoPath={repo.path}
+                status={status}
+                selected={selectedChange}
+                onSelect={setSelectedChange}
+                onStage={stage}
+                onUnstage={unstage}
+                onStageAll={stageAll}
+                onUnstageAll={unstageAll}
+                onCommit={commit}
+                onGitignore={gitignore}
+                busy={busy}
+              />
             ) : (
               <ResizablePanelGroup orientation="vertical">
                 <ResizablePanel defaultSize="58%" minSize="20%">
@@ -369,7 +549,14 @@ export default function App() {
                       <ResizableHandle />
                       <ResizablePanel defaultSize="58%" minSize="20%">
                         <div className="h-full border-l border-t border-border">
-                          <DiffView repoPath={repo.path} hash={selectedHash} file={selectedFile} />
+                          <DiffView
+                            repoPath={repo.path}
+                            target={
+                              selectedFile
+                                ? { kind: "commit", hash: selectedHash, file: selectedFile }
+                                : null
+                            }
+                          />
                         </div>
                       </ResizablePanel>
                     </ResizablePanelGroup>
