@@ -25,7 +25,22 @@ pub fn run() {
             git::git_add_remote,
             git::list_files,
             git::read_file,
-            git::git_stash
+            git::git_stash,
+            git::working_diff,
+            git::git_checkout,
+            git::git_stage,
+            git::git_unstage,
+            git::git_stage_all,
+            git::git_unstage_all,
+            git::git_commit,
+            git::git_create_branch,
+            git::git_delete_branch,
+            git::git_remote_branches,
+            git::git_commit_all,
+            git::add_to_gitignore,
+            git::git_stash_pop,
+            git::git_stash_apply,
+            git::git_stash_drop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

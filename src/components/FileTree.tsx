@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { ChevronDown, ChevronRight, File as FileIcon, Folder } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -9,11 +9,13 @@ function TreeItem({
   depth,
   selected,
   onSelect,
+  onContextMenuFile,
 }: {
   node: TreeNode;
   depth: number;
   selected: string | null;
   onSelect: (path: string) => void;
+  onContextMenuFile: (file: string, e: MouseEvent) => void;
 }) {
   const [open, setOpen] = useState(depth < 1);
   const pad = depth * 12 + 8;
@@ -42,6 +44,7 @@ function TreeItem({
               depth={depth + 1}
               selected={selected}
               onSelect={onSelect}
+              onContextMenuFile={onContextMenuFile}
             />
           ))}
       </div>
@@ -51,6 +54,7 @@ function TreeItem({
   return (
     <button
       onClick={() => onSelect(node.path)}
+      onContextMenu={(e) => onContextMenuFile(node.path, e)}
       style={{ paddingLeft: pad + 16 }}
       className={cn(
         "flex w-full items-center gap-1 py-0.5 pr-2 text-left",
@@ -69,10 +73,12 @@ export function FileTree({
   nodes,
   selected,
   onSelect,
+  onContextMenuFile,
 }: {
   nodes: TreeNode[];
   selected: string | null;
   onSelect: (path: string) => void;
+  onContextMenuFile: (file: string, e: MouseEvent) => void;
 }) {
   if (nodes.length === 0) {
     return <div className="p-3 text-muted-foreground/50">no tracked files</div>;
@@ -80,7 +86,14 @@ export function FileTree({
   return (
     <div className="py-1 text-[12px]">
       {nodes.map((n) => (
-        <TreeItem key={n.path} node={n} depth={0} selected={selected} onSelect={onSelect} />
+        <TreeItem
+          key={n.path}
+          node={n}
+          depth={0}
+          selected={selected}
+          onSelect={onSelect}
+          onContextMenuFile={onContextMenuFile}
+        />
       ))}
     </div>
   );
