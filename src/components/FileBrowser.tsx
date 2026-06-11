@@ -11,7 +11,7 @@ import { FileTree } from "@/components/FileTree";
 import { FileView } from "@/components/FileView";
 import { FileContextMenu } from "@/components/ContextMenu";
 import { buildTree } from "@/lib/tree";
-import { listFiles } from "@/lib/git";
+import { useGit } from "@/lib/gitClient";
 
 export function FileBrowser({
   repoPath,
@@ -20,6 +20,7 @@ export function FileBrowser({
   repoPath: string;
   onGitignore: (file: string) => void;
 }) {
+  const git = useGit();
   const [paths, setPaths] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +31,8 @@ export function FileBrowser({
     let cancelled = false;
     setError(null);
     setSelected(null);
-    listFiles(repoPath)
+    git
+      .listFiles(repoPath)
       .then((p) => {
         if (!cancelled) setPaths(p);
       })
@@ -40,7 +42,7 @@ export function FileBrowser({
     return () => {
       cancelled = true;
     };
-  }, [repoPath]);
+  }, [git, repoPath]);
 
   const nodes = useMemo(() => buildTree(paths), [paths]);
 

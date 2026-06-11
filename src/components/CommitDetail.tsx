@@ -2,12 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import { fullDate, statusStyle } from "@/lib/format";
-import {
-  commitDetails,
-  commitFiles,
-  type CommitDetails,
-  type FileChange,
-} from "@/lib/git";
+import type { CommitDetails, FileChange } from "@/lib/git";
+import { useGit } from "@/lib/gitClient";
 
 function Meta({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -29,6 +25,7 @@ export function CommitDetail({
   selectedFile: string | null;
   onSelectFile: (file: string) => void;
 }) {
+  const git = useGit();
   const [details, setDetails] = useState<CommitDetails | null>(null);
   const [files, setFiles] = useState<FileChange[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +34,7 @@ export function CommitDetail({
     let cancelled = false;
     setError(null);
     setDetails(null);
-    Promise.all([commitDetails(repoPath, hash), commitFiles(repoPath, hash)])
+    Promise.all([git.commitDetails(repoPath, hash), git.commitFiles(repoPath, hash)])
       .then(([d, f]) => {
         if (cancelled) return;
         setDetails(d);
@@ -54,7 +51,7 @@ export function CommitDetail({
     };
     // Re-run only when the commit changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repoPath, hash]);
+  }, [git, repoPath, hash]);
 
   if (error) return <div className="p-3 text-destructive">{error}</div>;
   if (!details)

@@ -2,7 +2,6 @@ import { useState, type MouseEvent, type ReactNode } from "react";
 import { ArrowUp, Check, Minus, Plus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { statusStyle } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -12,6 +11,7 @@ import {
 import { ChangeView } from "@/components/ChangeView";
 import { FileContextMenu } from "@/components/ContextMenu";
 import type { StatusEntry } from "@/lib/git";
+import { classifyAll, type WorkingChange } from "@/lib/workingChange";
 
 function Group({
   title,
@@ -54,8 +54,8 @@ function Group({
 }
 
 function FileRow({
-  entry,
-  letter,
+  change,
+  style: st,
   selected,
   onSelect,
   icon,
@@ -64,8 +64,8 @@ function FileRow({
   onContextMenu,
   busy,
 }: {
-  entry: StatusEntry;
-  letter: string;
+  change: WorkingChange;
+  style: { label: string; className: string };
   selected: boolean;
   onSelect: () => void;
   icon: ReactNode;
@@ -74,7 +74,6 @@ function FileRow({
   onContextMenu: (e: MouseEvent) => void;
   busy: boolean;
 }) {
-  const st = statusStyle(letter);
   return (
     <div
       onContextMenu={onContextMenu}
@@ -91,7 +90,7 @@ function FileRow({
         <span className={cn("w-3 shrink-0 text-center text-[11px]", st.className)}>
           {st.label}
         </span>
-        <span className="truncate text-[12px] text-muted-foreground">{entry.path}</span>
+        <span className="truncate text-[12px] text-muted-foreground">{change.path}</span>
       </button>
       <Button
         size="icon-sm"
@@ -136,11 +135,11 @@ export function ChangesView({
   const [message, setMessage] = useState("");
   const [menu, setMenu] = useState<{ file: string; x: number; y: number } | null>(null);
 
-  // y = working-tree status (unstaged); x = index status (staged). A file can be
-  // in both lists at once (e.g. "MM": staged edit + further unstaged edit).
-  const unstaged = status.filter((s) => s.y !== " ");
-  const staged = status.filter((s) => s.x !== " " && s.x !== "?");
-  const selectedEntry = selected ? status.find((s) => s.path === selected) : undefined;
+  // A file can be in both lists at once (e.g. staged edit + further unstaged edit).
+  const changes = classifyAll(status);
+  const unstaged = changes.filter((c) => c.unstaged);
+  const staged = changes.filter((c) => c.staged);
+  const selectedChange = selected ? changes.find((c) => c.path === selected) : undefined;
 
   // When nothing is staged, the Commit button stages everything first ("Commit
   // all") so you can commit unstaged/untracked changes directly.
@@ -170,17 +169,17 @@ export function ChangesView({
                 onAction={onStageAll}
                 busy={busy}
               >
-                {unstaged.map((s) => (
+                {unstaged.map((c) => (
                   <FileRow
-                    key={`u-${s.path}`}
-                    entry={s}
-                    letter={s.y}
-                    selected={selected === s.path}
-                    onSelect={() => onSelect(s.path)}
+                    key={`u-${c.path}`}
+                    change={c}
+                    style={c.unstagedStyle}
+                    selected={selected === c.path}
+                    onSelect={() => onSelect(c.path)}
                     icon={<Plus />}
                     actionLabel="Stage"
-                    onAction={() => onStage(s.path)}
-                    onContextMenu={openMenu(s.path)}
+                    onAction={() => onStage(c.path)}
+                    onContextMenu={openMenu(c.path)}
                     busy={busy}
                   />
                 ))}
@@ -192,17 +191,17 @@ export function ChangesView({
                 onAction={onUnstageAll}
                 busy={busy}
               >
-                {staged.map((s) => (
+                {staged.map((c) => (
                   <FileRow
-                    key={`s-${s.path}`}
-                    entry={s}
-                    letter={s.x}
-                    selected={selected === s.path}
-                    onSelect={() => onSelect(s.path)}
+                    key={`s-${c.path}`}
+                    change={c}
+                    style={c.stagedStyle}
+                    selected={selected === c.path}
+                    onSelect={() => onSelect(c.path)}
                     icon={<Minus />}
                     actionLabel="Unstage"
-                    onAction={() => onUnstage(s.path)}
-                    onContextMenu={openMenu(s.path)}
+                    onAction={() => onUnstage(c.path)}
+                    onContextMenu={openMenu(c.path)}
                     busy={busy}
                   />
                 ))}
@@ -253,8 +252,8 @@ export function ChangesView({
 
         <ResizablePanel defaultSize="54%" minSize="25%">
           <div className="h-full border-l border-t border-border">
-            {selectedEntry ? (
-              <ChangeView repoPath={repoPath} change={selectedEntry} />
+            {selectedChange ? (
+              <ChangeView repoPath={repoPath} change={selectedChange} />
             ) : (
               <div className="flex h-full items-center justify-center text-muted-foreground/50">
                 select a file to view its diff

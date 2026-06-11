@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { listen } from "@tauri-apps/api/event";
 import { Cloud, FolderOpen } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
@@ -21,49 +20,8 @@ import { FileBrowser } from "@/components/FileBrowser";
 import { CloneDialog } from "@/components/CloneDialog";
 import { SporkLogo } from "@/components/SporkLogo";
 import { remoteHostLabel, remoteWebUrl } from "@/lib/remote";
-import {
-  addToGitignore,
-  gitBranches,
-  gitCheckout,
-  gitCommit,
-  gitCommitAll,
-  gitCreateBranch,
-  gitDeleteBranch,
-  gitRemoteBranches,
-  gitRemoteTips,
-  gitStage,
-  gitStageAll,
-  gitStashApply,
-  gitStashDrop,
-  gitStashPop,
-  gitUnstage,
-  gitUnstageAll,
-  gitFetch,
-  gitLog,
-  gitPull,
-  gitPush,
-  gitRemotes,
-  gitStash,
-  gitStashes,
-  gitStatus,
-  gitTags,
-  gitAddRemote,
-  gitCreateTag,
-  gitDeleteTag,
-  gitRemoveRemote,
-  gitSubmodules,
-  gitSubmoduleUpdate,
-  openRepo,
-  startRepoWatch,
-  stopRepoWatch,
-  type Branch,
-  type Commit,
-  type RepoChangedPayload,
-  type Remote,
-  type RepoInfo,
-  type Stash,
-  type StatusEntry,
-} from "@/lib/git";
+import { useRepoSession, type SessionEvent } from "@/lib/repoSession";
+import type { Stash } from "@/lib/git";
 
 function EmptyState({
   onOpen,
@@ -95,86 +53,30 @@ function EmptyState({
   );
 }
 
+function notifyToast(event: SessionEvent) {
+  if (event === "external-change") {
+    toast("Repository changed", { id: "repo-changed" });
+  } else {
+    toast("Remote updated", {
+      description: "origin has new commits — Pull to merge",
+      id: "remote-updated",
+    });
+  }
+}
+
 export default function App() {
-  const [repo, setRepo] = useState<RepoInfo | null>(null);
-  const [commits, setCommits] = useState<Commit[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [remoteBranches, setRemoteBranches] = useState<string[]>([]);
-  const [submodules, setSubmodules] = useState<string[]>([]);
-  const [status, setStatus] = useState<StatusEntry[]>([]);
-  const [remotes, setRemotes] = useState<Remote[]>([]);
-  const [tags, setTags] = useState<string[]>([]);
-  const [stashes, setStashes] = useState<Stash[]>([]);
-  const [selectedHash, setSelectedHash] = useState<string | null>(null);
+  const session = useRepoSession({ notify: notifyToast });
+  const { snapshot, busy, error, selectedHash, selectHash, run, refresh } = session;
+
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [view, setView] = useState<View>("history");
   const [cloneOpen, setCloneOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const loadingPathRef = useRef<string | null>(null);
-  const queuedLoadRef = useRef<string | null>(null);
-  const selectedHashRef = useRef<string | null>(null);
-  // While a user-initiated action runs (and briefly after), suppress the
-  // "external change" toast so the action's own ripple doesn't notify.
-  const suppressToastUntilRef = useRef(0);
 
+  // A different commit means its file list no longer applies.
   useEffect(() => {
-    selectedHashRef.current = selectedHash;
+    setSelectedFile(null);
   }, [selectedHash]);
-
-  const load = useCallback(async (path: string) => {
-    if (loadingPathRef.current) {
-      queuedLoadRef.current = path;
-      return;
-    }
-
-    let nextPath: string | null = path;
-    while (nextPath) {
-      const currentPath = nextPath;
-      nextPath = null;
-      queuedLoadRef.current = null;
-      loadingPathRef.current = currentPath;
-      setBusy(true);
-      setError(null);
-      try {
-        const info = await openRepo(currentPath);
-        const [log, br, rbr, subs, st, rem, tg, stash] = await Promise.all([
-          gitLog(info.path, 300),
-          gitBranches(info.path),
-          gitRemoteBranches(info.path),
-          gitSubmodules(info.path),
-          gitStatus(info.path),
-          gitRemotes(info.path),
-          gitTags(info.path),
-          gitStashes(info.path),
-        ]);
-        setRepo(info);
-        setCommits(log);
-        setBranches(br);
-        setRemoteBranches(rbr);
-        setSubmodules(subs);
-        setStatus(st);
-        setRemotes(rem);
-        setTags(tg);
-        setStashes(stash);
-        const previousSelectedHash = selectedHashRef.current;
-        const nextSelectedHash =
-          previousSelectedHash && log.some((commit) => commit.hash === previousSelectedHash)
-            ? previousSelectedHash
-            : log[0]?.hash ?? null;
-        setSelectedHash(nextSelectedHash);
-        if (nextSelectedHash !== previousSelectedHash) setSelectedFile(null);
-      } catch (e) {
-        setError(String(e));
-      } finally {
-        loadingPathRef.current = null;
-        setBusy(false);
-        nextPath = queuedLoadRef.current;
-        queuedLoadRef.current = null;
-      }
-    }
-  }, []);
 
   const chooseRepo = useCallback(async () => {
     const dir = await open({
@@ -182,262 +84,119 @@ export default function App() {
       multiple: false,
       title: "Open a Git repository",
     });
-    if (typeof dir === "string") await load(dir);
-  }, [load]);
-
-  const refresh = useCallback(() => {
-    if (repo) void load(repo.path);
-  }, [repo, load]);
-
-  const runAction = useCallback(
-    async (fn: (p: string) => Promise<string>, label: string) => {
-      if (!repo) return;
-      suppressToastUntilRef.current = Infinity;
-      setBusy(true);
-      setError(null);
-      try {
-        await fn(repo.path);
-        await load(repo.path);
-      } catch (e) {
-        setError(`${label}: ${String(e)}`);
-        setBusy(false);
-      } finally {
-        suppressToastUntilRef.current = Date.now() + 1500;
-      }
-    },
-    [repo, load],
-  );
+    if (typeof dir === "string") await session.open(dir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.open]);
 
   const checkoutBranch = useCallback(
-    (name: string) => {
-      void runAction((p) => gitCheckout(p, name), `checkout ${name}`);
-    },
-    [runAction],
+    (name: string) => void run(`checkout ${name}`, (g, p) => g.checkout(p, name)),
+    [run],
   );
-
   const createBranch = useCallback(
     (name: string) => {
       const n = name.trim();
-      if (n) void runAction((p) => gitCreateBranch(p, n), `create ${n}`);
+      if (n) void run(`create ${n}`, (g, p) => g.createBranch(p, n));
     },
-    [runAction],
+    [run],
   );
-
   const deleteBranch = useCallback(
-    (name: string) => {
-      void runAction((p) => gitDeleteBranch(p, name), `delete ${name}`);
-    },
-    [runAction],
+    (name: string) => void run(`delete ${name}`, (g, p) => g.deleteBranch(p, name)),
+    [run],
   );
-
   const checkoutRemote = useCallback(
     (remoteRef: string) => {
       // Strip the remote name → DWIM short name; git creates/switches a local
       // branch tracking the remote.
       const short = remoteRef.replace(/^[^/]+\//, "");
-      void runAction((p) => gitCheckout(p, short), `checkout ${short}`);
+      void run(`checkout ${short}`, (g, p) => g.checkout(p, short));
     },
-    [runAction],
+    [run],
   );
-
   const createTag = useCallback(
     (name: string) => {
       const n = name.trim();
-      if (n) void runAction((p) => gitCreateTag(p, n), `tag ${n}`);
+      if (n) void run(`tag ${n}`, (g, p) => g.createTag(p, n));
     },
-    [runAction],
+    [run],
   );
   const deleteTag = useCallback(
-    (name: string) => void runAction((p) => gitDeleteTag(p, name), `delete tag ${name}`),
-    [runAction],
+    (name: string) => void run(`delete tag ${name}`, (g, p) => g.deleteTag(p, name)),
+    [run],
   );
   const checkoutTag = useCallback(
-    (name: string) => void runAction((p) => gitCheckout(p, name), `checkout ${name}`),
-    [runAction],
+    (name: string) => void run(`checkout ${name}`, (g, p) => g.checkout(p, name)),
+    [run],
   );
   const addRemote = useCallback(
     (name: string, url: string) => {
       const n = name.trim();
       const u = url.trim();
-      if (n && u) void runAction((p) => gitAddRemote(p, n, u), `add remote ${n}`);
+      if (n && u) void run(`add remote ${n}`, (g, p) => g.addRemote(p, n, u));
     },
-    [runAction],
+    [run],
   );
   const removeRemote = useCallback(
-    (name: string) => void runAction((p) => gitRemoveRemote(p, name), `remove remote ${name}`),
-    [runAction],
+    (name: string) => void run(`remove remote ${name}`, (g, p) => g.removeRemote(p, name)),
+    [run],
   );
   const submoduleUpdate = useCallback(
-    () => void runAction(gitSubmoduleUpdate, "submodule update"),
-    [runAction],
+    () => void run("submodule update", (g, p) => g.submoduleUpdate(p)),
+    [run],
   );
 
   const stage = useCallback(
-    (file: string) => void runAction((p) => gitStage(p, file), "stage"),
-    [runAction],
+    (file: string) => void run("stage", (g, p) => g.stage(p, file)),
+    [run],
   );
   const unstage = useCallback(
-    (file: string) => void runAction((p) => gitUnstage(p, file), "unstage"),
-    [runAction],
+    (file: string) => void run("unstage", (g, p) => g.unstage(p, file)),
+    [run],
   );
-  const stageAll = useCallback(() => void runAction(gitStageAll, "stage all"), [runAction]);
+  const stageAll = useCallback(() => void run("stage all", (g, p) => g.stageAll(p)), [run]);
   const unstageAll = useCallback(
-    () => void runAction(gitUnstageAll, "unstage all"),
-    [runAction],
-  );
-
-  const commit = useCallback(
-    async (message: string, stageAll: boolean, push: boolean): Promise<boolean> => {
-      if (!repo) return false;
-      suppressToastUntilRef.current = Infinity;
-      setBusy(true);
-      setError(null);
-      try {
-        try {
-          if (stageAll) await gitCommitAll(repo.path, message);
-          else await gitCommit(repo.path, message);
-        } catch (e) {
-          setError(`commit: ${String(e)}`);
-          setBusy(false);
-          return false;
-        }
-        // The commit succeeded; an optional push failing shouldn't undo it.
-        let pushErr: string | null = null;
-        if (push) {
-          try {
-            await gitPush(repo.path);
-          } catch (e) {
-            pushErr = `push: ${String(e)}`;
-          }
-        }
-        await load(repo.path); // reflect the new commit (this also clears the error)
-        if (pushErr) setError(pushErr); // ...so re-surface a push failure after it
-        return true;
-      } finally {
-        suppressToastUntilRef.current = Date.now() + 1500;
-      }
-    },
-    [repo, load],
+    () => void run("unstage all", (g, p) => g.unstageAll(p)),
+    [run],
   );
 
   const gitignore = useCallback(
-    (file: string) => void runAction((p) => addToGitignore(p, file), "add to .gitignore"),
-    [runAction],
+    (file: string) => void run("add to .gitignore", (g, p) => g.addToGitignore(p, file)),
+    [run],
   );
 
   const stashPop = useCallback(
-    (s: Stash) => void runAction((p) => gitStashPop(p, s.reff), "stash pop"),
-    [runAction],
+    (s: Stash) => void run("stash pop", (g, p) => g.stashPop(p, s.reff)),
+    [run],
   );
   const stashApply = useCallback(
-    (s: Stash) => void runAction((p) => gitStashApply(p, s.reff), "stash apply"),
-    [runAction],
+    (s: Stash) => void run("stash apply", (g, p) => g.stashApply(p, s.reff)),
+    [run],
   );
   const stashDrop = useCallback(
-    (s: Stash) => void runAction((p) => gitStashDrop(p, s.reff), "stash drop"),
-    [runAction],
+    (s: Stash) => void run("stash drop", (g, p) => g.stashDrop(p, s.reff)),
+    [run],
   );
 
-  const originRemote = remotes.find((r) => r.name === "origin") ?? remotes[0];
+  const originRemote =
+    snapshot?.remotes.find((r) => r.name === "origin") ?? snapshot?.remotes[0];
   const webUrl = originRemote ? remoteWebUrl(originRemote.url) : null;
   const hostLabel = (originRemote && remoteHostLabel(originRemote.url)) || "Web";
-  const repoPath = repo?.path ?? null;
-
-  useEffect(() => {
-    if (!repoPath) {
-      void stopRepoWatch().catch(() => {});
-      return;
-    }
-
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-
-    startRepoWatch(repoPath).catch((e) => {
-      if (!cancelled) setError(`watch: ${String(e)}`);
-    });
-
-    listen<RepoChangedPayload>("repo_changed", (event) => {
-      if (event.payload.path !== repoPath) return;
-      // Skip the echo of the user's own action — it already refreshed silently.
-      if (Date.now() < suppressToastUntilRef.current) return;
-      void load(repoPath);
-      toast("Repository changed", { id: "repo-changed" });
-    })
-      .then((dispose) => {
-        if (cancelled) dispose();
-        else unlisten = dispose;
-      })
-      .catch((e) => {
-        if (!cancelled) setError(`watch: ${String(e)}`);
-      });
-
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-      void stopRepoWatch().catch(() => {});
-    };
-  }, [repoPath, load]);
-
-  // Background fetch: every ~2 min, quietly fetch the remote; if its refs moved,
-  // refresh (so origin/* commits appear in the graph) and toast. The local-change
-  // toast is suppressed during the fetch so its ref churn doesn't double-notify.
-  useEffect(() => {
-    if (!repoPath) return;
-    let cancelled = false;
-    let lastTips = "";
-    gitRemoteTips(repoPath)
-      .then((t) => {
-        if (!cancelled) lastTips = t;
-      })
-      .catch(() => {});
-
-    const tick = async () => {
-      if (cancelled) return;
-      suppressToastUntilRef.current = Infinity;
-      try {
-        await gitFetch(repoPath);
-        const tips = await gitRemoteTips(repoPath);
-        if (!cancelled && tips !== lastTips) {
-          const hadBaseline = lastTips !== "";
-          lastTips = tips;
-          await load(repoPath);
-          if (hadBaseline) {
-            toast("Remote updated", {
-              description: "origin has new commits — Pull to merge",
-              id: "remote-updated",
-            });
-          }
-        }
-      } catch {
-        // Offline / auth failure — skip this round quietly.
-      } finally {
-        suppressToastUntilRef.current = Date.now() + 1500;
-      }
-    };
-
-    const interval = setInterval(tick, 120_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [repoPath, load]);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-[13px] text-foreground">
       <TitleBar
-        repo={repo}
+        repo={snapshot?.info ?? null}
         busy={busy}
         webUrl={webUrl}
         hostLabel={hostLabel}
         onRefresh={refresh}
         onOpen={chooseRepo}
         onClone={() => setCloneOpen(true)}
-        onFetch={() => runAction(gitFetch, "fetch")}
-        onPull={() => runAction(gitPull, "pull")}
-        onPush={() => runAction(gitPush, "push")}
-        onStash={() => runAction(gitStash, "stash")}
+        onFetch={() => run("fetch", (g, p) => g.fetch(p))}
+        onPull={() => run("pull", (g, p) => g.pull(p))}
+        onPush={() => run("push", (g, p) => g.push(p))}
+        onStash={() => run("stash", (g, p) => g.stashSave(p))}
         onOpenWebUrl={() => {
-          if (webUrl) openUrl(webUrl).catch((e) => setError(String(e)));
+          if (webUrl) openUrl(webUrl).catch((e) => toast(`open link: ${String(e)}`));
         }}
       />
 
@@ -447,7 +206,7 @@ export default function App() {
         </div>
       )}
 
-      {repo ? (
+      {snapshot ? (
         <ResizablePanelGroup orientation="horizontal" className="flex-1">
           <ResizablePanel
             defaultSize="260px"
@@ -459,13 +218,13 @@ export default function App() {
               <Sidebar
                 view={view}
                 onViewChange={setView}
-                branches={branches}
-                status={status}
-                remotes={remotes}
-                tags={tags}
-                stashes={stashes}
-                remoteBranches={remoteBranches}
-                submodules={submodules}
+                branches={snapshot.branches}
+                status={snapshot.status}
+                remotes={snapshot.remotes}
+                tags={snapshot.tags}
+                stashes={snapshot.stashes}
+                remoteBranches={snapshot.remoteBranches}
+                submodules={snapshot.submodules}
                 onCheckoutBranch={checkoutBranch}
                 onCreateBranch={createBranch}
                 onDeleteBranch={deleteBranch}
@@ -488,18 +247,18 @@ export default function App() {
 
           <ResizablePanel>
             {view === "files" ? (
-              <FileBrowser repoPath={repo.path} onGitignore={gitignore} />
+              <FileBrowser repoPath={snapshot.info.path} onGitignore={gitignore} />
             ) : view === "changes" ? (
               <ChangesView
-                repoPath={repo.path}
-                status={status}
+                repoPath={snapshot.info.path}
+                status={snapshot.status}
                 selected={selectedChange}
                 onSelect={setSelectedChange}
                 onStage={stage}
                 onUnstage={unstage}
                 onStageAll={stageAll}
                 onUnstageAll={unstageAll}
-                onCommit={commit}
+                onCommit={session.commit}
                 onGitignore={gitignore}
                 busy={busy}
               />
@@ -507,13 +266,9 @@ export default function App() {
               <ResizablePanelGroup orientation="vertical">
                 <ResizablePanel defaultSize="58%" minSize="20%">
                   <CommitList
-                    commits={commits}
+                    commits={snapshot.commits}
                     selected={selectedHash}
-                    onSelect={(h) => {
-                      selectedHashRef.current = h;
-                      setSelectedHash(h);
-                      setSelectedFile(null);
-                    }}
+                    onSelect={selectHash}
                   />
                 </ResizablePanel>
 
@@ -525,7 +280,7 @@ export default function App() {
                       <ResizablePanel defaultSize="42%" minSize="20%">
                         <div className="h-full border-t border-border">
                           <CommitDetail
-                            repoPath={repo.path}
+                            repoPath={snapshot.info.path}
                             hash={selectedHash}
                             selectedFile={selectedFile}
                             onSelectFile={setSelectedFile}
@@ -536,7 +291,7 @@ export default function App() {
                       <ResizablePanel defaultSize="58%" minSize="20%">
                         <div className="h-full border-l border-t border-border">
                           <DiffView
-                            repoPath={repo.path}
+                            repoPath={snapshot.info.path}
                             target={
                               selectedFile
                                 ? { kind: "commit", hash: selectedHash, file: selectedFile }
@@ -565,7 +320,7 @@ export default function App() {
           onClose={() => setCloneOpen(false)}
           onCloned={(p) => {
             setCloneOpen(false);
-            void load(p);
+            void session.open(p);
           }}
         />
       )}
