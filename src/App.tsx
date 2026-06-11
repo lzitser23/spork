@@ -30,6 +30,7 @@ import {
   gitCreateBranch,
   gitDeleteBranch,
   gitRemoteBranches,
+  gitRemoteTips,
   gitStage,
   gitStageAll,
   gitStashApply,
@@ -374,6 +375,50 @@ export default function App() {
       cancelled = true;
       if (unlisten) unlisten();
       void stopRepoWatch().catch(() => {});
+    };
+  }, [repoPath, load]);
+
+  // Background fetch: every ~2 min, quietly fetch the remote; if its refs moved,
+  // refresh (so origin/* commits appear in the graph) and toast. The local-change
+  // toast is suppressed during the fetch so its ref churn doesn't double-notify.
+  useEffect(() => {
+    if (!repoPath) return;
+    let cancelled = false;
+    let lastTips = "";
+    gitRemoteTips(repoPath)
+      .then((t) => {
+        if (!cancelled) lastTips = t;
+      })
+      .catch(() => {});
+
+    const tick = async () => {
+      if (cancelled) return;
+      suppressToastUntilRef.current = Infinity;
+      try {
+        await gitFetch(repoPath);
+        const tips = await gitRemoteTips(repoPath);
+        if (!cancelled && tips !== lastTips) {
+          const hadBaseline = lastTips !== "";
+          lastTips = tips;
+          await load(repoPath);
+          if (hadBaseline) {
+            toast("Remote updated", {
+              description: "origin has new commits — Pull to merge",
+              id: "remote-updated",
+            });
+          }
+        }
+      } catch {
+        // Offline / auth failure — skip this round quietly.
+      } finally {
+        suppressToastUntilRef.current = Date.now() + 1500;
+      }
+    };
+
+    const interval = setInterval(tick, 120_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
     };
   }, [repoPath, load]);
 

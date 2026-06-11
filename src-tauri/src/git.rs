@@ -229,7 +229,9 @@ pub fn git_log(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String
     // `--date-order` keeps commits in commit-date order while still guaranteeing
     // that no parent is shown before all of its children — exactly the ordering
     // the lane-assignment algorithm relies on for a clean graph.
-    let out = run_git(&path, &["log", "--date-order", "-n", &n, &fmt])?;
+    // `--all` so commits from other branches and remote-tracking refs (e.g.
+    // origin/dev that's ahead of you) show up in the graph too.
+    let out = run_git(&path, &["log", "--all", "--date-order", "-n", &n, &fmt])?;
 
     let mut commits = Vec::new();
     for record in out.split(RS) {
@@ -744,4 +746,11 @@ pub fn read_image(path: String, file: String) -> Result<ImageContent, String> {
     }
     let bytes = std::fs::read(&full).map_err(|e| e.to_string())?;
     Ok(ImageContent { data: STANDARD.encode(&bytes), mime, too_large: false, size })
+}
+
+/// A snapshot of all remote-tracking ref tips (refname + commit). The UI diffs
+/// this across background fetches to tell when the remote actually moved.
+#[tauri::command]
+pub fn git_remote_tips(path: String) -> Result<String, String> {
+    run_git(&path, &["for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes"])
 }

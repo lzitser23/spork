@@ -40,6 +40,7 @@ pub fn run() {
             git::git_create_branch,
             git::git_delete_branch,
             git::git_remote_branches,
+            git::git_remote_tips,
             git::add_to_gitignore,
             git::git_stash_pop,
             git::git_stash_apply,
