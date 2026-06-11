@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { FolderInput, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { gitClone } from "@/lib/git";
+import { useGit } from "@/lib/gitClient";
 
 const inputClass =
   "w-full rounded-md border border-input bg-background px-2 py-1.5 text-foreground outline-none placeholder:text-muted-foreground/50 focus-visible:ring-2 focus-visible:ring-ring";
@@ -15,6 +15,7 @@ export function CloneDialog({
   onClose: () => void;
   onCloned: (path: string) => void;
 }) {
+  const git = useGit();
   const [url, setUrl] = useState("");
   const [dir, setDir] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,7 +35,7 @@ export function CloneDialog({
     setBusy(true);
     setError(null);
     try {
-      const path = await gitClone(url.trim(), dir);
+      const path = await git.clone(url.trim(), dir);
       onCloned(path);
     } catch (e) {
       setError(String(e));
