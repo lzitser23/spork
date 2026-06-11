@@ -148,3 +148,12 @@ export interface FileContent {
 export const listFiles = (path: string) => invoke<string[]>("list_files", { path });
 export const readFile = (path: string, file: string) =>
   invoke<FileContent>("read_file", { path, file });
+
+export interface ImageContent {
+  data: string;
+  mime: string;
+  too_large: boolean;
+  size: number;
+}
+export const readImage = (path: string, file: string) =>
+  invoke<ImageContent>("read_image", { path, file });

@@ -1,7 +1,37 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
-import { readFile, type FileContent } from "@/lib/git";
+import { readFile, readImage, type FileContent, type ImageContent } from "@/lib/git";
 import { highlightLines, langForPath, type Token } from "@/lib/highlight";
+
+const IMAGE_EXT = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "ico",
+  "avif",
+  "svg",
+]);
+
+function isImagePath(file: string): boolean {
+  return IMAGE_EXT.has(file.split(".").pop()?.toLowerCase() ?? "");
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// A subtle dark checkerboard so transparent images (e.g. icons) read against the
+// pure-black UI instead of vanishing into it.
+const CHECKER: CSSProperties = {
+  backgroundColor: "#0a0a0a",
+  backgroundImage: "repeating-conic-gradient(#101010 0% 25%, #181818 0% 50%)",
+  backgroundSize: "20px 20px",
+};
 
 export function FileView({
   repoPath,
@@ -10,21 +40,27 @@ export function FileView({
   repoPath: string;
   file: string | null;
 }) {
+  const isImage = file ? isImagePath(file) : false;
   const [content, setContent] = useState<FileContent | null>(null);
+  const [image, setImage] = useState<ImageContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokens, setTokens] = useState<Token[][] | null>(null);
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
 
+  // Load text content or image bytes depending on the file type.
   useEffect(() => {
-    if (!file) {
-      setContent(null);
-      return;
-    }
-    let cancelled = false;
-    setError(null);
     setContent(null);
-    readFile(repoPath, file)
-      .then((c) => {
-        if (!cancelled) setContent(c);
+    setImage(null);
+    setError(null);
+    setDims(null);
+    if (!file) return;
+    let cancelled = false;
+    const req = isImage ? readImage(repoPath, file) : readFile(repoPath, file);
+    req
+      .then((r) => {
+        if (cancelled) return;
+        if (isImage) setImage(r as ImageContent);
+        else setContent(r as FileContent);
       })
       .catch((e) => {
         if (!cancelled) setError(String(e));
@@ -32,10 +68,9 @@ export function FileView({
     return () => {
       cancelled = true;
     };
-  }, [repoPath, file]);
+  }, [repoPath, file, isImage]);
 
-  // Highlight asynchronously once the text is loaded; plain text shows until
-  // (and unless) tokens arrive.
+  // Highlight text asynchronously once loaded; plain text shows until tokens arrive.
   useEffect(() => {
     setTokens(null);
     if (!file || !content || content.binary || content.too_large) return;
@@ -57,6 +92,41 @@ export function FileView({
       </div>
     );
   if (error) return <div className="p-3 text-destructive">{error}</div>;
+
+  if (isImage) {
+    if (!image) return <div className="p-3 text-muted-foreground/60">loading…</div>;
+    if (image.too_large)
+      return (
+        <div className="flex h-full items-center justify-center text-muted-foreground/50">
+          image too large to preview
+        </div>
+      );
+    return (
+      <div className="flex h-full flex-col">
+        <div
+          className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4"
+          style={CHECKER}
+        >
+          <img
+            src={`data:${image.mime};base64,${image.data}`}
+            alt={file}
+            onLoad={(e) =>
+              setDims({
+                w: e.currentTarget.naturalWidth,
+                h: e.currentTarget.naturalHeight,
+              })
+            }
+            className="max-h-full max-w-full object-contain"
+          />
+        </div>
+        <div className="shrink-0 border-t border-border/40 px-3 py-1 text-[11px] text-muted-foreground/60">
+          {file.split("/").pop()}
+          {dims ? ` · ${dims.w}×${dims.h}` : ""} · {formatBytes(image.size)}
+        </div>
+      </div>
+    );
+  }
+
   if (!content) return <div className="p-3 text-muted-foreground/60">loading…</div>;
   if (content.binary)
     return (
