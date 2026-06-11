@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { Cloud, FolderOpen } from "lucide-react";
+import { Toaster, toast } from "sonner";
 
 import {
   ResizableHandle,
@@ -113,6 +114,9 @@ export default function App() {
   const loadingPathRef = useRef<string | null>(null);
   const queuedLoadRef = useRef<string | null>(null);
   const selectedHashRef = useRef<string | null>(null);
+  // While a user-initiated action runs (and briefly after), suppress the
+  // "external change" toast so the action's own ripple doesn't notify.
+  const suppressToastUntilRef = useRef(0);
 
   useEffect(() => {
     selectedHashRef.current = selectedHash;
@@ -187,6 +191,7 @@ export default function App() {
   const runAction = useCallback(
     async (fn: (p: string) => Promise<string>, label: string) => {
       if (!repo) return;
+      suppressToastUntilRef.current = Infinity;
       setBusy(true);
       setError(null);
       try {
@@ -195,6 +200,8 @@ export default function App() {
       } catch (e) {
         setError(`${label}: ${String(e)}`);
         setBusy(false);
+      } finally {
+        suppressToastUntilRef.current = Date.now() + 1500;
       }
     },
     [repo, load],
@@ -281,28 +288,33 @@ export default function App() {
   const commit = useCallback(
     async (message: string, stageAll: boolean, push: boolean): Promise<boolean> => {
       if (!repo) return false;
+      suppressToastUntilRef.current = Infinity;
       setBusy(true);
       setError(null);
       try {
-        if (stageAll) await gitCommitAll(repo.path, message);
-        else await gitCommit(repo.path, message);
-      } catch (e) {
-        setError(`commit: ${String(e)}`);
-        setBusy(false);
-        return false;
-      }
-      // The commit succeeded; an optional push failing shouldn't undo it.
-      let pushErr: string | null = null;
-      if (push) {
         try {
-          await gitPush(repo.path);
+          if (stageAll) await gitCommitAll(repo.path, message);
+          else await gitCommit(repo.path, message);
         } catch (e) {
-          pushErr = `push: ${String(e)}`;
+          setError(`commit: ${String(e)}`);
+          setBusy(false);
+          return false;
         }
+        // The commit succeeded; an optional push failing shouldn't undo it.
+        let pushErr: string | null = null;
+        if (push) {
+          try {
+            await gitPush(repo.path);
+          } catch (e) {
+            pushErr = `push: ${String(e)}`;
+          }
+        }
+        await load(repo.path); // reflect the new commit (this also clears the error)
+        if (pushErr) setError(pushErr); // ...so re-surface a push failure after it
+        return true;
+      } finally {
+        suppressToastUntilRef.current = Date.now() + 1500;
       }
-      await load(repo.path); // reflect the new commit (this also clears the error)
-      if (pushErr) setError(pushErr); // ...so re-surface a push failure after it
-      return true;
     },
     [repo, load],
   );
@@ -344,7 +356,11 @@ export default function App() {
     });
 
     listen<RepoChangedPayload>("repo_changed", (event) => {
-      if (event.payload.path === repoPath) void load(repoPath);
+      if (event.payload.path !== repoPath) return;
+      // Skip the echo of the user's own action — it already refreshed silently.
+      if (Date.now() < suppressToastUntilRef.current) return;
+      void load(repoPath);
+      toast("Repository changed", { id: "repo-changed" });
     })
       .then((dispose) => {
         if (cancelled) dispose();
@@ -508,6 +524,17 @@ export default function App() {
           }}
         />
       )}
+
+      <Toaster
+        position="bottom-right"
+        theme="dark"
+        toastOptions={{
+          classNames: {
+            toast:
+              "!bg-background !border !border-border !text-foreground !text-[12px] !rounded-md !font-mono",
+          },
+        }}
+      />
     </div>
   );
 }
