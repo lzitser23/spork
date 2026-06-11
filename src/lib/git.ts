@@ -76,6 +76,29 @@ export interface FileChange {
   binary: boolean;
 }
 
+/**
+ * A pull request as reported by the GitHub CLI (`gh pr list --json …`).
+ * Field names are gh's (camelCase), since the JSON passes through verbatim.
+ */
+export interface PullRequest {
+  number: number;
+  title: string;
+  body: string;
+  author: { login: string };
+  headRefName: string;
+  baseRefName: string;
+  updatedAt: string;
+  isDraft: boolean;
+  /** "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "" */
+  reviewDecision: string;
+  additions: number;
+  deletions: number;
+  url: string;
+}
+
+export type ReviewVerdict = "approve" | "comment" | "request-changes";
+export type MergeStrategy = "merge" | "squash" | "rebase";
+
 export interface RepoChangedPayload {
   path: string;
 }

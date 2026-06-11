@@ -53,6 +53,79 @@ function signColor(line: string): string {
   return "text-foreground/40";
 }
 
+/**
+ * Render unified-diff text with per-line styling and best-effort syntax
+ * highlighting (`file` picks the language). The fetch-free half of DiffView,
+ * for callers that already hold the diff (e.g. the pull-request view).
+ */
+export function DiffText({ diff, file }: { diff: string; file: string | null }) {
+  // Per-line syntax tokens, keyed by line index (code lines only).
+  const [hl, setHl] = useState<Record<number, Token[]> | null>(null);
+
+  // Highlight the code lines of the diff (best-effort, syntax with diff context).
+  useEffect(() => {
+    setHl(null);
+    if (!diff || !file) return;
+    const lang = langForPath(file);
+    if (!lang) return;
+    const lines = diff.split("\n");
+    const idx: number[] = [];
+    const texts: string[] = [];
+    lines.forEach((l, i) => {
+      if (isCodeLine(l)) {
+        idx.push(i);
+        texts.push(l.slice(1));
+      }
+    });
+    if (texts.length === 0) return;
+    let cancelled = false;
+    highlightLines(texts.join("\n"), lang).then((toks) => {
+      if (cancelled || !toks || toks.length !== idx.length) return;
+      const map: Record<number, Token[]> = {};
+      idx.forEach((lineIndex, k) => {
+        map[lineIndex] = toks[k];
+      });
+      setHl(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [diff, file]);
+
+  if (!diff.trim())
+    return (
+      <div className="flex h-full items-center justify-center text-muted-foreground/50">
+        no textual changes
+      </div>
+    );
+
+  const lines = diff.split("\n");
+  return (
+    <div className="h-full overflow-auto py-1 text-[12px] leading-[1.5]">
+      {lines.map((line, i) => {
+        const toks = hl ? hl[i] : undefined;
+        if (toks) {
+          return (
+            <div key={i} className={cn("whitespace-pre px-3", lineBg(line))}>
+              <span className={signColor(line)}>{line[0] ?? " "}</span>
+              {toks.map((t, j) => (
+                <span key={j} style={{ color: t.color }}>
+                  {t.content}
+                </span>
+              ))}
+            </div>
+          );
+        }
+        return (
+          <div key={i} className={cn("whitespace-pre px-3", lineClass(line))}>
+            {line || " "}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function DiffView({
   repoPath,
   target,
@@ -64,8 +137,6 @@ export function DiffView({
   const [diff, setDiff] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Per-line syntax tokens, keyed by line index (code lines only).
-  const [hl, setHl] = useState<Record<number, Token[]> | null>(null);
 
   const key = target
     ? target.kind === "commit"
@@ -103,36 +174,6 @@ export function DiffView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [git, repoPath, key]);
 
-  // Highlight the code lines of the diff (best-effort, syntax with diff context).
-  useEffect(() => {
-    setHl(null);
-    if (!diff || !targetFile) return;
-    const lang = langForPath(targetFile);
-    if (!lang) return;
-    const lines = diff.split("\n");
-    const idx: number[] = [];
-    const texts: string[] = [];
-    lines.forEach((l, i) => {
-      if (isCodeLine(l)) {
-        idx.push(i);
-        texts.push(l.slice(1));
-      }
-    });
-    if (texts.length === 0) return;
-    let cancelled = false;
-    highlightLines(texts.join("\n"), lang).then((toks) => {
-      if (cancelled || !toks || toks.length !== idx.length) return;
-      const map: Record<number, Token[]> = {};
-      idx.forEach((lineIndex, k) => {
-        map[lineIndex] = toks[k];
-      });
-      setHl(map);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [diff, targetFile]);
-
   if (!target)
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground/50">
@@ -142,36 +183,6 @@ export function DiffView({
   if (loading)
     return <div className="p-3 text-muted-foreground/60">loading diff…</div>;
   if (error) return <div className="p-3 text-destructive">{error}</div>;
-  if (!diff.trim())
-    return (
-      <div className="flex h-full items-center justify-center text-muted-foreground/50">
-        no textual changes
-      </div>
-    );
 
-  const lines = diff.split("\n");
-  return (
-    <div className="h-full overflow-auto py-1 text-[12px] leading-[1.5]">
-      {lines.map((line, i) => {
-        const toks = hl ? hl[i] : undefined;
-        if (toks) {
-          return (
-            <div key={i} className={cn("whitespace-pre px-3", lineBg(line))}>
-              <span className={signColor(line)}>{line[0] ?? " "}</span>
-              {toks.map((t, j) => (
-                <span key={j} style={{ color: t.color }}>
-                  {t.content}
-                </span>
-              ))}
-            </div>
-          );
-        }
-        return (
-          <div key={i} className={cn("whitespace-pre px-3", lineClass(line))}>
-            {line || " "}
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <DiffText diff={diff} file={targetFile} />;
 }

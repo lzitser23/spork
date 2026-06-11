@@ -9,6 +9,7 @@ import {
   FileDiff,
   FolderTree,
   GitBranch,
+  GitPullRequest,
   History,
   Plus,
   Tag,
@@ -20,12 +21,13 @@ import {
 import { cn } from "@/lib/utils";
 import type { Branch, Remote, Stash, StatusEntry } from "@/lib/git";
 
-export type View = "history" | "files" | "changes";
+export type View = "history" | "files" | "changes" | "pulls";
 
 const NAV: { key: View; label: string; icon: LucideIcon }[] = [
   { key: "history", label: "History", icon: History },
   { key: "files", label: "Files", icon: FolderTree },
   { key: "changes", label: "Changes", icon: FileDiff },
+  { key: "pulls", label: "Pull Requests", icon: GitPullRequest },
 ];
 
 function Section({

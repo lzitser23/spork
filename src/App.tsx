@@ -17,6 +17,7 @@ import { CommitDetail } from "@/components/CommitDetail";
 import { DiffView } from "@/components/DiffView";
 import { ChangesView } from "@/components/ChangesView";
 import { FileBrowser } from "@/components/FileBrowser";
+import { PullRequestsView } from "@/components/PullRequestsView";
 import { CloneDialog } from "@/components/CloneDialog";
 import { SporkLogo } from "@/components/SporkLogo";
 import { remoteHostLabel, remoteWebUrl } from "@/lib/remote";
@@ -299,6 +300,14 @@ export default function App() {
           <ResizablePanel>
             {view === "files" ? (
               <FileBrowser repoPath={snapshot.info.path} onGitignore={gitignore} />
+            ) : view === "pulls" ? (
+              <PullRequestsView
+                repoPath={snapshot.info.path}
+                busy={busy}
+                onCheckout={(n) =>
+                  void run(`checkout PR #${n}`, (g, p) => g.prCheckout(p, n))
+                }
+              />
             ) : view === "changes" ? (
               <ChangesView
                 repoPath={snapshot.info.path}
