@@ -1,8 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
-import { Cloud, FolderOpen } from "lucide-react";
+import {
+  Archive,
+  ArrowDown,
+  ArrowUp,
+  Cloud,
+  Download,
+  ExternalLink,
+  FolderOpen,
+  GitBranch,
+  RefreshCw,
+} from "lucide-react";
 
 import {
   ResizableHandle,
