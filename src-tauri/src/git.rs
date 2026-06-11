@@ -21,9 +21,26 @@ pub struct RepoInfo {
     pub head: String,
 }
 
+/// Build a `Command` that won't flash a console window on Windows.
+///
+/// Spork is a GUI-subsystem app (no console of its own), so spawning a
+/// console-subsystem child (`git`, `gh`) makes Windows allocate a visible
+/// console for it. CREATE_NO_WINDOW suppresses that; output capture is
+/// unaffected because `.output()` talks to the child over pipes.
+pub(crate) fn new_command(program: &str) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 /// Run `git <args>` inside `repo` and return stdout, or stderr as the error.
 fn run_git(repo: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = new_command("git")
         .current_dir(repo)
         .args(args)
         .output()
@@ -43,7 +60,7 @@ fn run_git(repo: &str, args: &[&str]) -> Result<String, String> {
 /// Like [`run_git`], but tolerant of exit code 1 — which `git diff` (and
 /// `git diff --no-index`) use to mean "there were differences", not failure.
 fn run_git_diff(repo: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = new_command("git")
         .current_dir(repo)
         .args(args)
         .output()
