@@ -241,19 +241,22 @@ export function TitleBar({
                   <RefreshCw className={busy ? "animate-spin" : undefined} />
                 </Button>
               </Hint>
+
+              {/* Once a repo is open the empty-state CTAs are gone, so the title
+                  bar is the only place to switch to another repo. */}
+              <Separator orientation="vertical" className="h-4 shrink-0" />
+              <Hint label="Clone a repository from a URL">
+                <Button size="sm" variant="ghost" onClick={onClone} disabled={busy}>
+                  <Cloud /> Clone
+                </Button>
+              </Hint>
+              <Hint label="Open a local repository">
+                <Button size="sm" variant="outline" onClick={onOpen} disabled={busy}>
+                  <FolderOpen /> Open
+                </Button>
+              </Hint>
             </>
           )}
-
-          <Hint label="Clone a repository from a URL">
-            <Button size="sm" variant="ghost" onClick={onClone} disabled={busy}>
-              <Cloud /> Clone
-            </Button>
-          </Hint>
-          <Hint label="Open a local repository">
-            <Button size="sm" variant="outline" onClick={onOpen} disabled={busy}>
-              <FolderOpen /> Open
-            </Button>
-          </Hint>
         </div>
       </div>
 

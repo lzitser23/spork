@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Claude Code local (per-machine) settings — shared settings.json would be tracked
+.claude/settings.local.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

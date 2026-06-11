@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { fileDiff, workingDiff } from "@/lib/git";
+import { useGit } from "@/lib/gitClient";
 import { highlightLines, langForPath, type Token } from "@/lib/highlight";
 
 /** What to diff: a file inside a commit, or a file in the working tree. */
@@ -60,6 +60,7 @@ export function DiffView({
   repoPath: string;
   target: DiffTarget | null;
 }) {
+  const git = useGit();
   const [diff, setDiff] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,8 +84,8 @@ export function DiffView({
     setError(null);
     const req =
       target.kind === "commit"
-        ? fileDiff(repoPath, target.hash, target.file)
-        : workingDiff(repoPath, target.file);
+        ? git.fileDiff(repoPath, target.hash, target.file)
+        : git.workingDiff(repoPath, target.file);
     req
       .then((d) => {
         if (!cancelled) setDiff(d);
@@ -100,7 +101,7 @@ export function DiffView({
     };
     // `key` fully captures the target's identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repoPath, key]);
+  }, [git, repoPath, key]);
 
   // Highlight the code lines of the diff (best-effort, syntax with diff context).
   useEffect(() => {

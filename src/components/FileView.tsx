@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { readFile, readImage, type FileContent, type ImageContent } from "@/lib/git";
+import type { FileContent, ImageContent } from "@/lib/git";
+import { useGit } from "@/lib/gitClient";
 import { highlightLines, langForPath, type Token } from "@/lib/highlight";
 
 const IMAGE_EXT = new Set([
@@ -40,6 +41,7 @@ export function FileView({
   repoPath: string;
   file: string | null;
 }) {
+  const git = useGit();
   const isImage = file ? isImagePath(file) : false;
   const [content, setContent] = useState<FileContent | null>(null);
   const [image, setImage] = useState<ImageContent | null>(null);
@@ -55,7 +57,7 @@ export function FileView({
     setDims(null);
     if (!file) return;
     let cancelled = false;
-    const req = isImage ? readImage(repoPath, file) : readFile(repoPath, file);
+    const req = isImage ? git.readImage(repoPath, file) : git.readFile(repoPath, file);
     req
       .then((r) => {
         if (cancelled) return;
@@ -68,7 +70,7 @@ export function FileView({
     return () => {
       cancelled = true;
     };
-  }, [repoPath, file, isImage]);
+  }, [git, repoPath, file, isImage]);
 
   // Highlight text asynchronously once loaded; plain text shows until tokens arrive.
   useEffect(() => {
