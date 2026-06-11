@@ -5,8 +5,10 @@ import type {
   FileChange,
   FileContent,
   ImageContent,
+  PullRequest,
   Remote,
   RepoInfo,
+  ReviewVerdict,
   Stash,
   StatusEntry,
 } from "@/lib/git";
@@ -28,6 +30,9 @@ export interface FakeRepoState {
   diffs: Record<string, string>;
   fileContents: Record<string, FileContent>;
   remoteTips: string;
+  pullRequests: PullRequest[];
+  /** Full PR diff text keyed by PR number. */
+  prDiffs: Record<number, string>;
   /** Per-method error message — when set, that method rejects with it. */
   errors: Partial<Record<keyof GitClient, string>>;
 }
@@ -51,6 +56,24 @@ export function makeCommit(overrides: Partial<Commit> = {}): Commit {
   };
 }
 
+export function makePullRequest(overrides: Partial<PullRequest> = {}): PullRequest {
+  return {
+    number: 1,
+    title: "Example change",
+    body: "",
+    author: { login: "contributor" },
+    headRefName: "feature/example",
+    baseRefName: "main",
+    updatedAt: "2026-06-01T12:00:00Z",
+    isDraft: false,
+    reviewDecision: "REVIEW_REQUIRED",
+    additions: 1,
+    deletions: 0,
+    url: "https://github.com/example/repo/pull/1",
+    ...overrides,
+  };
+}
+
 export function makeState(overrides: Partial<FakeRepoState> = {}): FakeRepoState {
   return {
     info: { path: "/repo", name: "repo", branch: "main", head: "a1b2c3d" },
@@ -66,6 +89,8 @@ export function makeState(overrides: Partial<FakeRepoState> = {}): FakeRepoState
     diffs: {},
     fileContents: {},
     remoteTips: "refs/remotes/origin/main a1b2c3d4e5",
+    pullRequests: [],
+    prDiffs: {},
     errors: {},
     ...overrides,
   };
@@ -238,6 +263,37 @@ export function createFakeGit(overrides: Partial<FakeRepoState> = {}) {
     clone: call("clone", (url: string, parentDir: string) => {
       const name = url.replace(/\.git$/, "").split("/").pop() || "repo";
       return `${parentDir}/${name}`;
+    }),
+
+    prList: call("prList", () => state.pullRequests),
+    prDiff: call("prDiff", (_path: string, number: number) => state.prDiffs[number] ?? ""),
+    prCheckout: call("prCheckout", (_path: string, number: number) => {
+      const pr = state.pullRequests.find((p) => p.number === number);
+      if (pr) state.info = { ...state.info, branch: pr.headRefName };
+      return "ok";
+    }),
+    prReview: call(
+      "prReview",
+      (_path: string, number: number, verdict: ReviewVerdict) => {
+        state.pullRequests = state.pullRequests.map((p) =>
+          p.number === number
+            ? {
+                ...p,
+                reviewDecision:
+                  verdict === "approve"
+                    ? "APPROVED"
+                    : verdict === "request-changes"
+                      ? "CHANGES_REQUESTED"
+                      : p.reviewDecision,
+              }
+            : p,
+        );
+        return "ok";
+      },
+    ),
+    prMerge: call("prMerge", (_path: string, number: number) => {
+      state.pullRequests = state.pullRequests.filter((p) => p.number !== number);
+      return "ok";
     }),
 
     watchRepo: call("watchRepo", (_path: string, onChange: () => void) => {
