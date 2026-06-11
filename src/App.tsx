@@ -1,18 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
-import {
-  Archive,
-  ArrowDown,
-  ArrowUp,
-  Cloud,
-  Download,
-  ExternalLink,
-  FolderOpen,
-  GitBranch,
-  RefreshCw,
-} from "lucide-react";
+import { Cloud, FolderOpen } from "lucide-react";
 
 import {
   ResizableHandle,
@@ -144,9 +134,11 @@ export default function App() {
       setError(null);
       try {
         const info = await openRepo(currentPath);
-        const [log, br, st, rem, tg, stash] = await Promise.all([
+        const [log, br, rbr, subs, st, rem, tg, stash] = await Promise.all([
           gitLog(info.path, 300),
           gitBranches(info.path),
+          gitRemoteBranches(info.path),
+          gitSubmodules(info.path),
           gitStatus(info.path),
           gitRemotes(info.path),
           gitTags(info.path),
@@ -155,6 +147,8 @@ export default function App() {
         setRepo(info);
         setCommits(log);
         setBranches(br);
+        setRemoteBranches(rbr);
+        setSubmodules(subs);
         setStatus(st);
         setRemotes(rem);
         setTags(tg);

@@ -705,3 +705,43 @@ pub fn read_file(path: String, file: String) -> Result<FileContent, String> {
         size,
     })
 }
+
+/// A working-tree image, base64-encoded for an `<img>` data URL.
+#[derive(Serialize)]
+pub struct ImageContent {
+    pub data: String,
+    pub mime: String,
+    pub too_large: bool,
+    pub size: u64,
+}
+
+/// MIME type from a file's extension (the image kinds we preview).
+fn mime_for(file: &str) -> &'static str {
+    match file.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Read a working-tree image file, base64-encoded with its MIME type, guarding
+/// against very large files.
+#[tauri::command]
+pub fn read_image(path: String, file: String) -> Result<ImageContent, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    const LIMIT: u64 = 25_000_000;
+    let full = Path::new(&path).join(&file);
+    let size = std::fs::metadata(&full).map_err(|e| e.to_string())?.len();
+    let mime = mime_for(&file).to_string();
+    if size > LIMIT {
+        return Ok(ImageContent { data: String::new(), mime, too_large: true, size });
+    }
+    let bytes = std::fs::read(&full).map_err(|e| e.to_string())?;
+    Ok(ImageContent { data: STANDARD.encode(&bytes), mime, too_large: false, size })
+}
