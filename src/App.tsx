@@ -1,17 +1,8 @@
-import { useCallback, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  Archive,
-  ArrowDown,
-  ArrowUp,
-  Cloud,
-  Download,
-  ExternalLink,
-  FolderOpen,
-  GitBranch,
-  RefreshCw,
-} from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { Cloud, FolderOpen } from "lucide-react";
 
 import {
   ResizableHandle,
@@ -19,9 +10,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { TitleBar } from "@/components/TitleBar";
 import { Sidebar, type View } from "@/components/Sidebar";
 import { CommitList } from "@/components/CommitList";
 import { CommitDetail } from "@/components/CommitDetail";
@@ -63,23 +52,16 @@ import {
   gitSubmodules,
   gitSubmoduleUpdate,
   openRepo,
+  startRepoWatch,
+  stopRepoWatch,
   type Branch,
   type Commit,
+  type RepoChangedPayload,
   type Remote,
   type RepoInfo,
   type Stash,
   type StatusEntry,
 } from "@/lib/git";
-
-/** Wrap any single element with a hover tooltip. */
-function Hint({ label, children }: { label: string; children: ReactElement }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={children} />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
 
 function EmptyState({
   onOpen,
@@ -128,37 +110,60 @@ export default function App() {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadingPathRef = useRef<string | null>(null);
+  const queuedLoadRef = useRef<string | null>(null);
+  const selectedHashRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedHashRef.current = selectedHash;
+  }, [selectedHash]);
 
   const load = useCallback(async (path: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const info = await openRepo(path);
-      const [log, br, rbr, st, rem, tg, stash, subs] = await Promise.all([
-        gitLog(info.path, 300),
-        gitBranches(info.path),
-        gitRemoteBranches(info.path),
-        gitStatus(info.path),
-        gitRemotes(info.path),
-        gitTags(info.path),
-        gitStashes(info.path),
-        gitSubmodules(info.path),
-      ]);
-      setRepo(info);
-      setCommits(log);
-      setBranches(br);
-      setRemoteBranches(rbr);
-      setStatus(st);
-      setRemotes(rem);
-      setTags(tg);
-      setStashes(stash);
-      setSubmodules(subs);
-      setSelectedHash(log[0]?.hash ?? null);
-      setSelectedFile(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
+    if (loadingPathRef.current) {
+      queuedLoadRef.current = path;
+      return;
+    }
+
+    let nextPath: string | null = path;
+    while (nextPath) {
+      const currentPath = nextPath;
+      nextPath = null;
+      queuedLoadRef.current = null;
+      loadingPathRef.current = currentPath;
+      setBusy(true);
+      setError(null);
+      try {
+        const info = await openRepo(currentPath);
+        const [log, br, st, rem, tg, stash] = await Promise.all([
+          gitLog(info.path, 300),
+          gitBranches(info.path),
+          gitStatus(info.path),
+          gitRemotes(info.path),
+          gitTags(info.path),
+          gitStashes(info.path),
+        ]);
+        setRepo(info);
+        setCommits(log);
+        setBranches(br);
+        setStatus(st);
+        setRemotes(rem);
+        setTags(tg);
+        setStashes(stash);
+        const previousSelectedHash = selectedHashRef.current;
+        const nextSelectedHash =
+          previousSelectedHash && log.some((commit) => commit.hash === previousSelectedHash)
+            ? previousSelectedHash
+            : log[0]?.hash ?? null;
+        setSelectedHash(nextSelectedHash);
+        if (nextSelectedHash !== previousSelectedHash) setSelectedFile(null);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        loadingPathRef.current = null;
+        setBusy(false);
+        nextPath = queuedLoadRef.current;
+        queuedLoadRef.current = null;
+      }
     }
   }, []);
 
@@ -319,82 +324,57 @@ export default function App() {
   const originRemote = remotes.find((r) => r.name === "origin") ?? remotes[0];
   const webUrl = originRemote ? remoteWebUrl(originRemote.url) : null;
   const hostLabel = (originRemote && remoteHostLabel(originRemote.url)) || "Web";
+  const repoPath = repo?.path ?? null;
+
+  useEffect(() => {
+    if (!repoPath) {
+      void stopRepoWatch().catch(() => {});
+      return;
+    }
+
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    startRepoWatch(repoPath).catch((e) => {
+      if (!cancelled) setError(`watch: ${String(e)}`);
+    });
+
+    listen<RepoChangedPayload>("repo_changed", (event) => {
+      if (event.payload.path === repoPath) void load(repoPath);
+    })
+      .then((dispose) => {
+        if (cancelled) dispose();
+        else unlisten = dispose;
+      })
+      .catch((e) => {
+        if (!cancelled) setError(`watch: ${String(e)}`);
+      });
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+      void stopRepoWatch().catch(() => {});
+    };
+  }, [repoPath, load]);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-[13px] text-foreground">
-      {repo && (
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        {repo && (
-          <>
-            <span className="text-foreground">{repo.name}</span>
-            <Badge variant="outline" className="gap-1 font-normal">
-              <GitBranch className="size-3" />
-              {repo.branch}
-            </Badge>
-            {repo.head && <span className="text-muted-foreground">{repo.head}</span>}
-
-            <Separator orientation="vertical" className="h-4" />
-            <Hint label="Fetch all remotes & prune">
-              <Button size="xs" variant="ghost" onClick={() => runAction(gitFetch, "fetch")} disabled={busy}>
-                <Download /> Fetch
-              </Button>
-            </Hint>
-            <Hint label="Pull (fast-forward only)">
-              <Button size="xs" variant="ghost" onClick={() => runAction(gitPull, "pull")} disabled={busy}>
-                <ArrowDown /> Pull
-              </Button>
-            </Hint>
-            <Hint label="Push the current branch">
-              <Button size="xs" variant="ghost" onClick={() => runAction(gitPush, "push")} disabled={busy}>
-                <ArrowUp /> Push
-              </Button>
-            </Hint>
-            <Hint label="Stash working-tree changes (git stash)">
-              <Button size="xs" variant="ghost" onClick={() => runAction(gitStash, "stash")} disabled={busy}>
-                <Archive /> Stash
-              </Button>
-            </Hint>
-            {webUrl && (
-              <Hint label={`Open on ${hostLabel} in your browser`}>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => openUrl(webUrl).catch((e) => setError(String(e)))}
-                >
-                  <ExternalLink /> {hostLabel}
-                </Button>
-              </Hint>
-            )}
-          </>
-        )}
-
-        <div className="ml-auto flex items-center gap-1.5">
-          {repo && (
-            <Hint label="Refresh">
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                onClick={refresh}
-                disabled={busy}
-                aria-label="Refresh"
-              >
-                <RefreshCw className={busy ? "animate-spin" : undefined} />
-              </Button>
-            </Hint>
-          )}
-          <Hint label="Clone a repository from a URL">
-            <Button size="sm" variant="ghost" onClick={() => setCloneOpen(true)} disabled={busy}>
-              <Cloud /> Clone
-            </Button>
-          </Hint>
-          <Hint label="Open a local repository">
-            <Button size="sm" variant="outline" onClick={chooseRepo} disabled={busy}>
-              <FolderOpen /> Open
-            </Button>
-          </Hint>
-        </div>
-      </header>
-      )}
+      <TitleBar
+        repo={repo}
+        busy={busy}
+        webUrl={webUrl}
+        hostLabel={hostLabel}
+        onRefresh={refresh}
+        onOpen={chooseRepo}
+        onClone={() => setCloneOpen(true)}
+        onFetch={() => runAction(gitFetch, "fetch")}
+        onPull={() => runAction(gitPull, "pull")}
+        onPush={() => runAction(gitPush, "push")}
+        onStash={() => runAction(gitStash, "stash")}
+        onOpenWebUrl={() => {
+          if (webUrl) openUrl(webUrl).catch((e) => setError(String(e)));
+        }}
+      />
 
       {error && (
         <div className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-destructive">
@@ -465,6 +445,7 @@ export default function App() {
                     commits={commits}
                     selected={selectedHash}
                     onSelect={(h) => {
+                      selectedHashRef.current = h;
                       setSelectedHash(h);
                       setSelectedFile(null);
                     }}
