@@ -5,14 +5,14 @@
 //! itself. List output is gh's JSON, passed to the frontend verbatim — the
 //! TypeScript side owns those types.
 
-use std::process::Command;
+use crate::git::new_command;
 
 /// Run `gh <args>` inside `repo` and return stdout, or stderr as the error.
 ///
 /// A missing binary maps to the sentinel `gh-not-installed`, which the
 /// frontend turns into setup instructions instead of a raw OS error.
 fn run_gh(repo: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("gh")
+    let output = new_command("gh")
         .current_dir(repo)
         .args(args)
         .output()
