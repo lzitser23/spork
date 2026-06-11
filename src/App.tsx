@@ -17,9 +17,12 @@ import { CommitDetail } from "@/components/CommitDetail";
 import { DiffView } from "@/components/DiffView";
 import { ChangesView } from "@/components/ChangesView";
 import { FileBrowser } from "@/components/FileBrowser";
+import { PullRequestsView } from "@/components/PullRequestsView";
 import { CloneDialog } from "@/components/CloneDialog";
 import { SporkLogo } from "@/components/SporkLogo";
 import { remoteHostLabel, remoteWebUrl } from "@/lib/remote";
+import { useGit } from "@/lib/gitClient";
+import { forgetRepo, recentRepos, rememberRepo } from "@/lib/recentRepos";
 import { useRepoSession, type SessionEvent } from "@/lib/repoSession";
 import type { Stash } from "@/lib/git";
 
@@ -65,6 +68,7 @@ function notifyToast(event: SessionEvent) {
 }
 
 export default function App() {
+  const git = useGit();
   const session = useRepoSession({ notify: notifyToast });
   const { snapshot, busy, error, selectedHash, selectHash, run, refresh } = session;
 
@@ -72,11 +76,57 @@ export default function App() {
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [view, setView] = useState<View>("history");
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [recent, setRecent] = useState<string[]>(() => recentRepos());
 
   // A different commit means its file list no longer applies.
   useEffect(() => {
     setSelectedFile(null);
   }, [selectedHash]);
+
+  // Every successfully opened repo goes to the front of the recent list
+  // (snapshot.info.path is the resolved repo root, so entries are canonical).
+  const repoPath = snapshot?.info.path ?? null;
+  useEffect(() => {
+    if (repoPath) setRecent(rememberRepo(repoPath));
+  }, [repoPath]);
+
+  // On launch, reopen the repo from the previous session. Probe it first so a
+  // repo that has vanished since then falls back to the welcome screen
+  // quietly instead of greeting the user with an error.
+  useEffect(() => {
+    const last = recentRepos()[0];
+    if (!last) return;
+    let cancelled = false;
+    git.openRepo(last).then(
+      () => {
+        if (!cancelled) void session.open(last);
+      },
+      () => {
+        if (!cancelled) setRecent(forgetRepo(last));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openRecent = useCallback(
+    async (path: string) => {
+      if (path === repoPath) return;
+      try {
+        // Probe before switching so a dead entry doesn't replace the open repo.
+        await git.openRepo(path);
+      } catch (e) {
+        setRecent(forgetRepo(path));
+        toast(`open: ${String(e)}`);
+        return;
+      }
+      await session.open(path);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [git, repoPath, session.open],
+  );
 
   const chooseRepo = useCallback(async () => {
     const dir = await open({
@@ -188,6 +238,8 @@ export default function App() {
         busy={busy}
         webUrl={webUrl}
         hostLabel={hostLabel}
+        recentRepos={recent}
+        onOpenRecent={(p) => void openRecent(p)}
         onRefresh={refresh}
         onOpen={chooseRepo}
         onClone={() => setCloneOpen(true)}
@@ -248,6 +300,14 @@ export default function App() {
           <ResizablePanel>
             {view === "files" ? (
               <FileBrowser repoPath={snapshot.info.path} onGitignore={gitignore} />
+            ) : view === "pulls" ? (
+              <PullRequestsView
+                repoPath={snapshot.info.path}
+                busy={busy}
+                onCheckout={(n) =>
+                  void run(`checkout PR #${n}`, (g, p) => g.prCheckout(p, n))
+                }
+              />
             ) : view === "changes" ? (
               <ChangesView
                 repoPath={snapshot.info.path}

@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+mod gh;
 mod git;
 mod watch;
 
@@ -50,6 +51,11 @@ pub fn run() {
             git::git_remove_remote,
             git::git_submodules,
             git::git_submodule_update,
+            gh::gh_pr_list,
+            gh::gh_pr_diff,
+            gh::gh_pr_checkout,
+            gh::gh_pr_review,
+            gh::gh_pr_merge,
             watch::start_repo_watch,
             watch::stop_repo_watch
         ])

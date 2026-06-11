@@ -4,6 +4,8 @@ import {
   Archive,
   ArrowDown,
   ArrowUp,
+  Check,
+  ChevronDown,
   Cloud,
   Copy,
   Download,
@@ -18,6 +20,13 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { RepoInfo } from "@/lib/git";
@@ -53,6 +62,11 @@ export const tauriWindowChrome: WindowChromeClient = {
     return getCurrentWindow().onResized(() => handler());
   },
 };
+
+function repoBasename(path: string): string {
+  const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
 
 function Hint({ label, children }: { label: string; children: ReactElement }) {
   return (
@@ -94,6 +108,8 @@ export function TitleBar({
   busy,
   webUrl,
   hostLabel,
+  recentRepos,
+  onOpenRecent,
   onRefresh,
   onOpen,
   onClone,
@@ -108,6 +124,9 @@ export function TitleBar({
   busy: boolean;
   webUrl: string | null;
   hostLabel: string;
+  /** Recently opened repo roots, most recent first. */
+  recentRepos: string[];
+  onOpenRecent: (path: string) => void;
   onRefresh: () => void;
   onOpen: () => void;
   onClone: () => void;
@@ -182,7 +201,42 @@ export function TitleBar({
         {repo && (
           <>
             <Separator orientation="vertical" className="h-4 shrink-0" />
-            <span className="min-w-0 truncate text-foreground">{repo.name}</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                data-testid="repo-switcher"
+                data-tauri-drag-region="false"
+                className="-mx-1 flex min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 text-foreground transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-muted/70"
+              >
+                <span className="min-w-0 truncate">{repo.name}</span>
+                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" sideOffset={6} className="max-w-md">
+                <DropdownMenuLabel>recent repositories</DropdownMenuLabel>
+                {recentRepos.map((path) => {
+                  const isCurrent = path === repo.path;
+                  return (
+                    <DropdownMenuItem
+                      key={path}
+                      disabled={busy}
+                      onClick={() => {
+                        if (!isCurrent) onOpenRecent(path);
+                      }}
+                    >
+                      <Check
+                        className={cn("size-3", isCurrent ? "opacity-100" : "opacity-0")}
+                      />
+                      <span className="shrink-0">{repoBasename(path)}</span>
+                      <span className="min-w-0 flex-1 truncate text-right text-muted-foreground">
+                        {path}
+                      </span>
+                    </DropdownMenuItem>
+                  );
+                })}
+                {recentRepos.length === 0 && (
+                  <DropdownMenuItem disabled>no recent repositories</DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Badge variant="outline" className="gap-1 font-normal">
               <GitBranch className="size-3" />
               {repo.branch}
