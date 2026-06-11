@@ -31,6 +31,8 @@ function renderTitleBar(chrome = fakeChrome()) {
     busy: false,
     webUrl: "https://github.com/example/spork",
     hostLabel: "GitHub",
+    recentRepos: [repo.path, "D:\\DEV\\other-repo"],
+    onOpenRecent: vi.fn(),
     onRefresh: vi.fn(),
     onOpen: vi.fn(),
     onClone: vi.fn(),
@@ -73,6 +75,21 @@ test("marks the title bar as draggable while blocking action and window-control 
     "data-tauri-drag-region",
     "false",
   );
+});
+
+test("repo name opens the recent-repos menu and switches to another repo", async () => {
+  const user = userEvent.setup();
+  const props = renderTitleBar();
+
+  await user.click(screen.getByTestId("repo-switcher"));
+
+  // The current repo is listed but selecting it is a no-op.
+  await user.click(await screen.findByText("D:\\DEV\\spork"));
+  expect(props.onOpenRecent).not.toHaveBeenCalled();
+
+  await user.click(screen.getByTestId("repo-switcher"));
+  await user.click(await screen.findByText("D:\\DEV\\other-repo"));
+  expect(props.onOpenRecent).toHaveBeenCalledWith("D:\\DEV\\other-repo");
 });
 
 test("routes window control buttons through the window chrome client", async () => {
