@@ -135,8 +135,19 @@ fn is_noisy_path(path: &Path) -> bool {
         };
         let name = part.to_string_lossy().to_ascii_lowercase();
 
-        if inside_git && matches!(name.as_str(), "objects" | "logs" | "hooks") {
-            return true;
+        if inside_git {
+            // Pure-noise directories.
+            if matches!(name.as_str(), "objects" | "logs" | "hooks") {
+                return true;
+            }
+            // Files a refresh itself rewrites — `git status` rewrites `.git/index`
+            // on every load, so reacting to it would loop forever — plus transient
+            // locks and per-operation metadata. Real ref/HEAD changes still pass.
+            if name.ends_with(".lock")
+                || matches!(name.as_str(), "index" | "fetch_head" | "orig_head" | "commit_editmsg")
+            {
+                return true;
+            }
         }
 
         if name == ".git" {
@@ -171,6 +182,17 @@ mod tests {
         )));
         assert!(super::is_noisy_path(Path::new(
             r"D:\repo\dist\assets\index.js"
+        )));
+    }
+
+    #[test]
+    fn transient_git_files_are_filtered() {
+        // `git status` rewrites the index on every load — reacting would loop.
+        assert!(super::is_noisy_path(Path::new(r"D:\repo\.git\index")));
+        assert!(super::is_noisy_path(Path::new(r"D:\repo\.git\index.lock")));
+        assert!(super::is_noisy_path(Path::new(r"D:\repo\.git\FETCH_HEAD")));
+        assert!(super::is_noisy_path(Path::new(
+            r"D:\repo\.git\refs\heads\main.lock"
         )));
     }
 
