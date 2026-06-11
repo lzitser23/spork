@@ -20,9 +20,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { TitleBar } from "@/components/TitleBar";
 import { Sidebar, type View } from "@/components/Sidebar";
 import { CommitList } from "@/components/CommitList";
 import { CommitDetail } from "@/components/CommitDetail";
@@ -74,16 +72,6 @@ import {
   type Stash,
   type StatusEntry,
 } from "@/lib/git";
-
-/** Wrap any single element with a hover tooltip. */
-function Hint({ label, children }: { label: string; children: ReactElement }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={children} />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
 
 function EmptyState({
   onOpen,
@@ -381,79 +369,22 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-[13px] text-foreground">
-      {repo && (
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        {repo && (
-          <>
-            <span className="text-foreground">{repo.name}</span>
-            <Badge variant="outline" className="gap-1 font-normal">
-              <GitBranch className="size-3" />
-              {repo.branch}
-            </Badge>
-            {repo.head && <span className="text-muted-foreground">{repo.head}</span>}
-
-            <Separator orientation="vertical" className="h-4" />
-            <Hint label="Fetch all remotes & prune">
-              <Button size="xs" variant="ghost" onClick={() => runAction(gitFetch, "fetch")} disabled={busy}>
-                <Download /> Fetch
-              </Button>
-            </Hint>
-            <Hint label="Pull (fast-forward only)">
-              <Button size="xs" variant="ghost" onClick={() => runAction(gitPull, "pull")} disabled={busy}>
-                <ArrowDown /> Pull
-              </Button>
-            </Hint>
-            <Hint label="Push the current branch">
-              <Button size="xs" variant="ghost" onClick={() => runAction(gitPush, "push")} disabled={busy}>
-                <ArrowUp /> Push
-              </Button>
-            </Hint>
-            <Hint label="Stash working-tree changes (git stash)">
-              <Button size="xs" variant="ghost" onClick={() => runAction(gitStash, "stash")} disabled={busy}>
-                <Archive /> Stash
-              </Button>
-            </Hint>
-            {webUrl && (
-              <Hint label={`Open on ${hostLabel} in your browser`}>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => openUrl(webUrl).catch((e) => setError(String(e)))}
-                >
-                  <ExternalLink /> {hostLabel}
-                </Button>
-              </Hint>
-            )}
-          </>
-        )}
-
-        <div className="ml-auto flex items-center gap-1.5">
-          {repo && (
-            <Hint label="Refresh">
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                onClick={refresh}
-                disabled={busy}
-                aria-label="Refresh"
-              >
-                <RefreshCw className={busy ? "animate-spin" : undefined} />
-              </Button>
-            </Hint>
-          )}
-          <Hint label="Clone a repository from a URL">
-            <Button size="sm" variant="ghost" onClick={() => setCloneOpen(true)} disabled={busy}>
-              <Cloud /> Clone
-            </Button>
-          </Hint>
-          <Hint label="Open a local repository">
-            <Button size="sm" variant="outline" onClick={chooseRepo} disabled={busy}>
-              <FolderOpen /> Open
-            </Button>
-          </Hint>
-        </div>
-      </header>
-      )}
+      <TitleBar
+        repo={repo}
+        busy={busy}
+        webUrl={webUrl}
+        hostLabel={hostLabel}
+        onRefresh={refresh}
+        onOpen={chooseRepo}
+        onClone={() => setCloneOpen(true)}
+        onFetch={() => runAction(gitFetch, "fetch")}
+        onPull={() => runAction(gitPull, "pull")}
+        onPush={() => runAction(gitPush, "push")}
+        onStash={() => runAction(gitStash, "stash")}
+        onOpenWebUrl={() => {
+          if (webUrl) openUrl(webUrl).catch((e) => setError(String(e)));
+        }}
+      />
 
       {error && (
         <div className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-destructive">
