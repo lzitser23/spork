@@ -104,6 +104,8 @@ export const gitDeleteBranch = (path: string, name: string, force = false) =>
   invoke<string>("git_delete_branch", { path, name, force });
 export const gitRemoteBranches = (path: string) =>
   invoke<string[]>("git_remote_branches", { path });
+export const gitRemoteTips = (path: string) =>
+  invoke<string>("git_remote_tips", { path });
 export const gitCommitAll = (path: string, message: string) =>
   invoke<string>("git_commit_all", { path, message });
 export const addToGitignore = (path: string, file: string) =>
