@@ -9,9 +9,12 @@ import type {
   FileChange,
   FileContent,
   ImageContent,
+  MergeStrategy,
+  PullRequest,
   Remote,
   RepoChangedPayload,
   RepoInfo,
+  ReviewVerdict,
   Stash,
   StatusEntry,
 } from "@/lib/git";
@@ -67,6 +70,22 @@ export interface GitClient {
   clone(url: string, parentDir: string): Promise<string>;
 
   /**
+   * Pull-request review, backed by the GitHub CLI (`gh`) — it brings its own
+   * sign-in and repo detection. Calls reject with the sentinel
+   * `gh-not-installed` when the CLI is missing.
+   */
+  prList(path: string): Promise<PullRequest[]>;
+  prDiff(path: string, number: number): Promise<string>;
+  prCheckout(path: string, number: number): Promise<string>;
+  prReview(
+    path: string,
+    number: number,
+    verdict: ReviewVerdict,
+    body: string,
+  ): Promise<string>;
+  prMerge(path: string, number: number, strategy: MergeStrategy): Promise<string>;
+
+  /**
    * Watch the repo for external changes. `onChange` fires on every change the
    * backend reports for `path`. Resolves to a stop function.
    */
@@ -117,6 +136,15 @@ export const tauriGitClient: GitClient = {
   pull: (path) => invoke("git_pull", { path }),
   push: (path) => invoke("git_push", { path }),
   clone: (url, parentDir) => invoke("git_clone", { url, parentDir }),
+
+  prList: async (path) =>
+    JSON.parse(await invoke<string>("gh_pr_list", { path })) as PullRequest[],
+  prDiff: (path, number) => invoke("gh_pr_diff", { path, number }),
+  prCheckout: (path, number) => invoke("gh_pr_checkout", { path, number }),
+  prReview: (path, number, verdict, body) =>
+    invoke("gh_pr_review", { path, number, verdict, body }),
+  prMerge: (path, number, strategy) =>
+    invoke("gh_pr_merge", { path, number, strategy }),
 
   async watchRepo(path, onChange) {
     await invoke<void>("start_repo_watch", { path });
