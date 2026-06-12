@@ -5,24 +5,28 @@
 //! itself. List output is gh's JSON, passed to the frontend verbatim — the
 //! TypeScript side owns those types.
 
-use std::process::Command;
+use crate::git::{command_output, new_command, CommandError, COMMAND_TIMEOUT};
 
 /// Run `gh <args>` inside `repo` and return stdout, or stderr as the error.
 ///
 /// A missing binary maps to the sentinel `gh-not-installed`, which the
 /// frontend turns into setup instructions instead of a raw OS error.
 fn run_gh(repo: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("gh")
-        .current_dir(repo)
-        .args(args)
-        .output()
-        .map_err(|e| {
+    let mut cmd = new_command("gh");
+    cmd.current_dir(repo).args(args);
+    let output = command_output(cmd, COMMAND_TIMEOUT).map_err(|e| match e {
+        CommandError::Launch(e) => {
             if e.kind() == std::io::ErrorKind::NotFound {
                 "gh-not-installed".to_string()
             } else {
                 format!("failed to launch gh: {e}")
             }
-        })?;
+        }
+        CommandError::OutputReader => "failed to capture gh output".to_string(),
+        CommandError::TimedOut => {
+            format!("gh {} timed out after {}s", args.join(" "), COMMAND_TIMEOUT.as_secs())
+        }
+    })?;
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr).trim().to_string();

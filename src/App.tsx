@@ -307,6 +307,7 @@ export default function App() {
                 onCheckout={(n) =>
                   void run(`checkout PR #${n}`, (g, p) => g.prCheckout(p, n))
                 }
+                onRepoChanged={() => run("fetch", (g, p) => g.fetch(p))}
               />
             ) : view === "changes" ? (
               <ChangesView
