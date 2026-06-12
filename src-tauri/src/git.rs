@@ -10,8 +10,13 @@ use parse::{
     Branch, Commit, CommitDetails, FileChange, Remote, Stash, StatusEntry, RS, US,
 };
 use serde::Serialize;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+pub(crate) const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Serialize)]
 pub struct RepoInfo {
@@ -38,13 +43,96 @@ pub(crate) fn new_command(program: &str) -> Command {
     cmd
 }
 
+#[derive(Debug)]
+pub(crate) enum CommandError {
+    Launch(std::io::Error),
+    OutputReader,
+    TimedOut,
+}
+
+fn collect_output<R: Read + Send + 'static>(mut reader: R) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = reader.read_to_end(&mut buf);
+        buf
+    })
+}
+
+fn wait_with_timeout(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> Result<ExitStatus, CommandError> {
+    let start = Instant::now();
+    loop {
+        match child.try_wait().map_err(CommandError::Launch)? {
+            Some(status) => return Ok(status),
+            None if start.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CommandError::TimedOut);
+            }
+            None => thread::sleep(Duration::from_millis(20)),
+        }
+    }
+}
+
+pub(crate) fn command_output(mut cmd: Command, timeout: Duration) -> Result<Output, CommandError> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(CommandError::Launch)?;
+    let stdout = child.stdout.take().ok_or(CommandError::OutputReader)?;
+    let stderr = child.stderr.take().ok_or(CommandError::OutputReader)?;
+    let stdout = collect_output(stdout);
+    let stderr = collect_output(stderr);
+    let status = wait_with_timeout(child, timeout)?;
+
+    Ok(Output {
+        status,
+        stdout: stdout.join().map_err(|_| CommandError::OutputReader)?,
+        stderr: stderr.join().map_err(|_| CommandError::OutputReader)?,
+    })
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn command_output_times_out_when_process_does_not_finish() {
+        #[cfg(windows)]
+        let cmd = {
+            let mut cmd = new_command("powershell");
+            cmd.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+            cmd
+        };
+        #[cfg(not(windows))]
+        let cmd = {
+            let mut cmd = new_command("sh");
+            cmd.args(["-c", "sleep 5"]);
+            cmd
+        };
+
+        let err = command_output(cmd, Duration::from_millis(20))
+            .expect_err("sleep command should time out");
+
+        assert!(matches!(err, CommandError::TimedOut), "unexpected error: {err:?}");
+    }
+}
+
 /// Run `git <args>` inside `repo` and return stdout, or stderr as the error.
 fn run_git(repo: &str, args: &[&str]) -> Result<String, String> {
-    let output = new_command("git")
-        .current_dir(repo)
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to launch git: {e}"))?;
+    let mut cmd = new_command("git");
+    cmd.current_dir(repo).args(args);
+    let output = command_output(cmd, COMMAND_TIMEOUT).map_err(|e| match e {
+        CommandError::Launch(e) => format!("failed to launch git: {e}"),
+        CommandError::OutputReader => "failed to capture git output".to_string(),
+        CommandError::TimedOut => {
+            format!("git {} timed out after {}s", args.join(" "), COMMAND_TIMEOUT.as_secs())
+        }
+    })?;
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -60,11 +148,15 @@ fn run_git(repo: &str, args: &[&str]) -> Result<String, String> {
 /// Like [`run_git`], but tolerant of exit code 1 — which `git diff` (and
 /// `git diff --no-index`) use to mean "there were differences", not failure.
 fn run_git_diff(repo: &str, args: &[&str]) -> Result<String, String> {
-    let output = new_command("git")
-        .current_dir(repo)
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to launch git: {e}"))?;
+    let mut cmd = new_command("git");
+    cmd.current_dir(repo).args(args);
+    let output = command_output(cmd, COMMAND_TIMEOUT).map_err(|e| match e {
+        CommandError::Launch(e) => format!("failed to launch git: {e}"),
+        CommandError::OutputReader => "failed to capture git output".to_string(),
+        CommandError::TimedOut => {
+            format!("git {} timed out after {}s", args.join(" "), COMMAND_TIMEOUT.as_secs())
+        }
+    })?;
     match output.status.code() {
         Some(0) | Some(1) => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
         _ => {
