@@ -16,14 +16,19 @@ index 0000000..1111111 100644
  line three
 `;
 
-function setup(fake = createFakeGit()) {
+function setup(fake = createFakeGit(), onRepoChanged = vi.fn()) {
   const onCheckout = vi.fn();
   render(
     <GitClientProvider value={fake.client}>
-      <PullRequestsView repoPath="/repo" busy={false} onCheckout={onCheckout} />
+      <PullRequestsView
+        repoPath="/repo"
+        busy={false}
+        onCheckout={onCheckout}
+        onRepoChanged={onRepoChanged}
+      />
     </GitClientProvider>,
   );
-  return { fake, onCheckout };
+  return { fake, onCheckout, onRepoChanged };
 }
 
 test("lists open PRs and shows the selected one's files and diff", async () => {
@@ -85,8 +90,10 @@ test("comment and request-changes need a body; comment sends it", async () => {
 
 test("merge strategy menu merges the PR and the list reloads without it", async () => {
   const user = userEvent.setup();
+  const onRepoChanged = vi.fn();
   const { fake } = setup(
     createFakeGit({ pullRequests: [makePullRequest({ number: 9, title: "Ship it" })] }),
+    onRepoChanged,
   );
 
   await user.click(await screen.findByRole("button", { name: /merge/i }));
@@ -94,6 +101,7 @@ test("merge strategy menu merges the PR and the list reloads without it", async 
 
   const call = fake.calls.find((c) => c.method === "prMerge");
   expect(call?.args).toEqual(["/repo", 9, "squash"]);
+  expect(onRepoChanged).toHaveBeenCalledOnce();
   expect(await screen.findByText(/no open pull requests/i)).toBeInTheDocument();
 });
 

@@ -113,11 +113,14 @@ export function PullRequestsView({
   repoPath,
   busy,
   onCheckout,
+  onRepoChanged,
 }: {
   repoPath: string;
   busy: boolean;
   /** Check out the PR's branch locally (rippling into a snapshot reload). */
   onCheckout: (number: number) => void;
+  /** Refresh the main repository model after PR operations that move refs. */
+  onRepoChanged: () => Promise<void> | void;
 }) {
   const git = useGit();
 
@@ -214,6 +217,7 @@ export function PullRequestsView({
     if (!pr) return;
     void act(`merge #${pr.number}`, async () => {
       await git.prMerge(repoPath, pr.number, strategy);
+      await onRepoChanged();
       toast(`merged #${pr.number}`);
     });
   };
