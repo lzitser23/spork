@@ -18,6 +18,12 @@ use std::time::{Duration, Instant};
 
 pub(crate) const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Ceiling for network transfers (clone/fetch/pull/push and all `gh` calls).
+/// These can legitimately run for many minutes on large repos or slow links —
+/// killing them mid-transfer strands partial clones — so the timeout exists
+/// only to catch a truly wedged process, not to bound normal work.
+pub(crate) const NETWORK_TIMEOUT: Duration = Duration::from_secs(3600);
+
 #[derive(Serialize)]
 pub struct RepoInfo {
     pub path: String,
@@ -31,7 +37,7 @@ pub struct RepoInfo {
 /// Spork is a GUI-subsystem app (no console of its own), so spawning a
 /// console-subsystem child (`git`, `gh`) makes Windows allocate a visible
 /// console for it. CREATE_NO_WINDOW suppresses that; output capture is
-/// unaffected because `.output()` talks to the child over pipes.
+/// unaffected because [`command_output`] talks to the child over pipes.
 pub(crate) fn new_command(program: &str) -> Command {
     #[allow(unused_mut)]
     let mut cmd = Command::new(program);
@@ -46,8 +52,29 @@ pub(crate) fn new_command(program: &str) -> Command {
 #[derive(Debug)]
 pub(crate) enum CommandError {
     Launch(std::io::Error),
+    Wait(std::io::Error),
     OutputReader,
     TimedOut,
+}
+
+/// Human-readable message for a spawn/wait failure, shared by the git and gh
+/// wrappers so the three call sites don't drift apart.
+pub(crate) fn describe_command_error(
+    program: &str,
+    args: &[&str],
+    e: CommandError,
+    timeout: Duration,
+) -> String {
+    match e {
+        CommandError::Launch(e) => format!("failed to launch {program}: {e}"),
+        CommandError::Wait(e) => format!("failed waiting for {program}: {e}"),
+        CommandError::OutputReader => format!("failed to capture {program} output"),
+        CommandError::TimedOut => format!(
+            "{program} {} timed out after {}s",
+            args.join(" "),
+            timeout.as_secs()
+        ),
+    }
 }
 
 fn collect_output<R: Read + Send + 'static>(mut reader: R) -> thread::JoinHandle<Vec<u8>> {
@@ -63,15 +90,25 @@ fn wait_with_timeout(
     timeout: Duration,
 ) -> Result<ExitStatus, CommandError> {
     let start = Instant::now();
+    // Exponential backoff keeps the added latency for fast commands (the
+    // common case — every snapshot load is ~10 of them) near zero, while
+    // long-running ones settle into a cheap 20ms poll.
+    let mut delay = Duration::from_millis(1);
     loop {
-        match child.try_wait().map_err(CommandError::Launch)? {
+        match child.try_wait().map_err(CommandError::Wait)? {
             Some(status) => return Ok(status),
             None if start.elapsed() >= timeout => {
+                // kill() terminates only the direct child; helpers git spawned
+                // (ssh, git-remote-https, credential managers) may linger
+                // until their pipes close. Acceptable for a wedged process.
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(CommandError::TimedOut);
             }
-            None => thread::sleep(Duration::from_millis(20)),
+            None => {
+                thread::sleep(delay);
+                delay = (delay * 2).min(Duration::from_millis(20));
+            }
         }
     }
 }
@@ -124,15 +161,20 @@ mod command_tests {
 
 /// Run `git <args>` inside `repo` and return stdout, or stderr as the error.
 fn run_git(repo: &str, args: &[&str]) -> Result<String, String> {
+    run_git_with_timeout(repo, args, COMMAND_TIMEOUT)
+}
+
+/// Like [`run_git`], but with [`NETWORK_TIMEOUT`] — for transfers (clone,
+/// fetch, pull, push) that can legitimately outlive the local-command ceiling.
+fn run_git_network(repo: &str, args: &[&str]) -> Result<String, String> {
+    run_git_with_timeout(repo, args, NETWORK_TIMEOUT)
+}
+
+fn run_git_with_timeout(repo: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
     let mut cmd = new_command("git");
     cmd.current_dir(repo).args(args);
-    let output = command_output(cmd, COMMAND_TIMEOUT).map_err(|e| match e {
-        CommandError::Launch(e) => format!("failed to launch git: {e}"),
-        CommandError::OutputReader => "failed to capture git output".to_string(),
-        CommandError::TimedOut => {
-            format!("git {} timed out after {}s", args.join(" "), COMMAND_TIMEOUT.as_secs())
-        }
-    })?;
+    let output =
+        command_output(cmd, timeout).map_err(|e| describe_command_error("git", args, e, timeout))?;
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -150,13 +192,8 @@ fn run_git(repo: &str, args: &[&str]) -> Result<String, String> {
 fn run_git_diff(repo: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = new_command("git");
     cmd.current_dir(repo).args(args);
-    let output = command_output(cmd, COMMAND_TIMEOUT).map_err(|e| match e {
-        CommandError::Launch(e) => format!("failed to launch git: {e}"),
-        CommandError::OutputReader => "failed to capture git output".to_string(),
-        CommandError::TimedOut => {
-            format!("git {} timed out after {}s", args.join(" "), COMMAND_TIMEOUT.as_secs())
-        }
-    })?;
+    let output = command_output(cmd, COMMAND_TIMEOUT)
+        .map_err(|e| describe_command_error("git", args, e, COMMAND_TIMEOUT))?;
     match output.status.code() {
         Some(0) | Some(1) => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
         _ => {
@@ -339,13 +376,13 @@ pub fn working_diff(path: String, file: String) -> Result<String, String> {
 /// Fetch from all remotes (prunes deleted branches).
 #[tauri::command]
 pub fn git_fetch(path: String) -> Result<String, String> {
-    run_git(&path, &["fetch", "--all", "--prune"])
+    run_git_network(&path, &["fetch", "--all", "--prune"])
 }
 
 /// Fast-forward pull.
 #[tauri::command]
 pub fn git_pull(path: String) -> Result<String, String> {
-    run_git(&path, &["pull", "--ff-only"])
+    run_git_network(&path, &["pull", "--ff-only"])
 }
 
 /// Push the current branch. If it has no upstream yet (e.g. a branch just
@@ -358,9 +395,9 @@ pub fn git_push(path: String) -> Result<String, String> {
     )
     .is_ok();
     if has_upstream {
-        run_git(&path, &["push"])
+        run_git_network(&path, &["push"])
     } else {
-        run_git(&path, &["push", "-u", "origin", "HEAD"])
+        run_git_network(&path, &["push", "-u", "origin", "HEAD"])
     }
 }
 
@@ -546,7 +583,7 @@ pub fn git_clone(url: String, parent_dir: String) -> Result<String, String> {
     //   * disabling the `ext`/`fd` transports kills the remote-helper RCE class
     //     (`ext::sh -c …`) regardless of the local git's protocol defaults,
     //     which vary by platform.
-    run_git(
+    run_git_network(
         &parent_dir,
         &[
             "-c",
