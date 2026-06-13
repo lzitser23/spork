@@ -217,8 +217,9 @@ export function PullRequestsView({
     if (!pr) return;
     void act(`merge #${pr.number}`, async () => {
       await git.prMerge(repoPath, pr.number, strategy);
-      await onRepoChanged();
+      // Toast as soon as the merge lands; the snapshot refresh can lag behind.
       toast(`merged #${pr.number}`);
+      await onRepoChanged();
     });
   };
 

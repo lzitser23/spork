@@ -5,27 +5,22 @@
 //! itself. List output is gh's JSON, passed to the frontend verbatim — the
 //! TypeScript side owns those types.
 
-use crate::git::{command_output, new_command, CommandError, COMMAND_TIMEOUT};
+use crate::git::{command_output, describe_command_error, new_command, CommandError, NETWORK_TIMEOUT};
 
 /// Run `gh <args>` inside `repo` and return stdout, or stderr as the error.
+/// Every gh call hits the network (API or a PR-branch fetch), hence
+/// [`NETWORK_TIMEOUT`].
 ///
 /// A missing binary maps to the sentinel `gh-not-installed`, which the
 /// frontend turns into setup instructions instead of a raw OS error.
 fn run_gh(repo: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = new_command("gh");
     cmd.current_dir(repo).args(args);
-    let output = command_output(cmd, COMMAND_TIMEOUT).map_err(|e| match e {
-        CommandError::Launch(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                "gh-not-installed".to_string()
-            } else {
-                format!("failed to launch gh: {e}")
-            }
+    let output = command_output(cmd, NETWORK_TIMEOUT).map_err(|e| match e {
+        CommandError::Launch(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            "gh-not-installed".to_string()
         }
-        CommandError::OutputReader => "failed to capture gh output".to_string(),
-        CommandError::TimedOut => {
-            format!("gh {} timed out after {}s", args.join(" "), COMMAND_TIMEOUT.as_secs())
-        }
+        e => describe_command_error("gh", args, e, NETWORK_TIMEOUT),
     })?;
 
     if !output.status.success() {
