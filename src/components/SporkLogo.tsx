@@ -2,9 +2,8 @@ import { useId } from "react";
 
 import { cn } from "@/lib/utils";
 
-// Spork app mark — concept G2 ("pixel spork") from the Claude Design handoff.
-// Fork prongs fused to a spoon bowl, built from rounded monospace blocks, set
-// in a true macOS squircle. Pure monochrome. Ported from the design's icons.jsx.
+// Spork app mark: fork prongs fused to a spoon bowl, built from rounded
+// monospace blocks set in a true macOS squircle. Pure monochrome.
 
 const INK = "#0B0B0C";
 const WHITE = "#F4F4F2";

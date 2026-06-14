@@ -2,7 +2,7 @@
 name = "spork"
 version = "0.1.0"
 description = "Spork — a native, black, monospace Git client"
-authors = ["lzitser23 <lzitser23@gmail.com>"]
+authors = ["lzitser23"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
