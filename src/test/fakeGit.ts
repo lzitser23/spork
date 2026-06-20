@@ -169,6 +169,10 @@ export function createFakeGit(overrides: Partial<FakeRepoState> = {}) {
       "readImage",
       (): ImageContent => ({ data: "", mime: "image/png", too_large: false, size: 0 }),
     ),
+    readImageAt: call(
+      "readImageAt",
+      (): ImageContent => ({ data: "", mime: "image/png", too_large: false, size: 0 }),
+    ),
     remoteTips: call("remoteTips", () => state.remoteTips),
 
     checkout: call("checkout", (_path: string, name: string) => {

@@ -41,6 +41,8 @@ export interface GitClient {
   listFiles(path: string): Promise<string[]>;
   readFile(path: string, file: string): Promise<FileContent>;
   readImage(path: string, file: string): Promise<ImageContent>;
+  /** An image blob at a specific revision (`git show <rev>:<file>`). */
+  readImageAt(path: string, rev: string, file: string): Promise<ImageContent>;
   /** Snapshot of remote-tracking ref tips; compared across fetches. */
   remoteTips(path: string): Promise<string>;
 
@@ -110,6 +112,7 @@ export const tauriGitClient: GitClient = {
   listFiles: (path) => invoke("list_files", { path }),
   readFile: (path, file) => invoke("read_file", { path, file }),
   readImage: (path, file) => invoke("read_image", { path, file }),
+  readImageAt: (path, rev, file) => invoke("read_image_at", { path, rev, file }),
   remoteTips: (path) => invoke("git_remote_tips", { path }),
 
   checkout: (path, name) => invoke("git_checkout", { path, name }),
