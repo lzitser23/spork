@@ -29,6 +29,7 @@ pub fn run() {
             git::list_files,
             git::read_file,
             git::read_image,
+            git::read_image_at,
             git::git_stash,
             git::working_diff,
             git::git_checkout,

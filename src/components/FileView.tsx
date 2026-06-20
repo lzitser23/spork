@@ -1,38 +1,9 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 
 import type { FileContent, ImageContent } from "@/lib/git";
 import { useGit } from "@/lib/gitClient";
 import { highlightLines, langForPath, type Token } from "@/lib/highlight";
-
-const IMAGE_EXT = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "bmp",
-  "ico",
-  "avif",
-  "svg",
-]);
-
-function isImagePath(file: string): boolean {
-  return IMAGE_EXT.has(file.split(".").pop()?.toLowerCase() ?? "");
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// A subtle dark checkerboard so transparent images (e.g. icons) read against the
-// pure-black UI instead of vanishing into it.
-const CHECKER: CSSProperties = {
-  backgroundColor: "#0a0a0a",
-  backgroundImage: "repeating-conic-gradient(#101010 0% 25%, #181818 0% 50%)",
-  backgroundSize: "20px 20px",
-};
+import { CHECKER, formatBytes, isImagePath } from "@/lib/images";
 
 export function FileView({
   repoPath,
