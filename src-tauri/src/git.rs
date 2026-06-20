@@ -207,6 +207,25 @@ fn run_git_diff(repo: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Like [`run_git`], but returns raw stdout bytes — for binary output (e.g.
+/// `git show <rev>:<file>` on an image blob), which the lossy-UTF-8 string
+/// wrappers would corrupt.
+fn run_git_bytes(repo: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut cmd = new_command("git");
+    cmd.current_dir(repo).args(args);
+    let output = command_output(cmd, COMMAND_TIMEOUT)
+        .map_err(|e| describe_command_error("git", args, e, COMMAND_TIMEOUT))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            format!("git {} failed", args.join(" "))
+        } else {
+            err
+        });
+    }
+    Ok(output.stdout)
+}
+
 /// Resolve the work-tree root for a user-selected path.
 ///
 /// `--show-toplevel` works from any subdirectory of a repo, so the user can pick
@@ -701,6 +720,26 @@ pub fn read_image(path: String, file: String) -> Result<ImageContent, String> {
         return Ok(ImageContent { data: String::new(), mime, too_large: true, size });
     }
     let bytes = std::fs::read(&full).map_err(|e| e.to_string())?;
+    Ok(ImageContent { data: STANDARD.encode(&bytes), mime, too_large: false, size })
+}
+
+/// Read an image blob at a specific revision (`git show <rev>:<file>`),
+/// base64-encoded with its MIME type. Errors when the blob doesn't exist at
+/// that revision — e.g. a commit's parent for a freshly added file, or `HEAD`
+/// for an untracked one — which the diff view reads as "side absent".
+#[tauri::command]
+pub fn read_image_at(path: String, rev: String, file: String) -> Result<ImageContent, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    const LIMIT: usize = 25_000_000;
+    // `<rev>:<file>` is a single revision argument; git resolves <file> against
+    // the repo root and reads the blob object (a symlink stays a blob, never
+    // followed), so no on-disk path-escape check is needed here.
+    let bytes = run_git_bytes(&path, &["show", &format!("{rev}:{file}")])?;
+    let mime = mime_for(&file).to_string();
+    let size = bytes.len() as u64;
+    if bytes.len() > LIMIT {
+        return Ok(ImageContent { data: String::new(), mime, too_large: true, size });
+    }
     Ok(ImageContent { data: STANDARD.encode(&bytes), mime, too_large: false, size })
 }
 
