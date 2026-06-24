@@ -129,11 +129,13 @@ fn spawn_debounced_emitter(
 
 fn is_noisy_path(path: &Path) -> bool {
     let mut inside_git = false;
+    let mut last_was_git_dir = false;
     for component in path.components() {
         let Component::Normal(part) = component else {
             continue;
         };
         let name = part.to_string_lossy().to_ascii_lowercase();
+        last_was_git_dir = false;
 
         if inside_git {
             // Pure-noise directories.
@@ -152,6 +154,7 @@ fn is_noisy_path(path: &Path) -> bool {
 
         if name == ".git" {
             inside_git = true;
+            last_was_git_dir = true;
             continue;
         }
 
@@ -162,7 +165,12 @@ fn is_noisy_path(path: &Path) -> bool {
             return true;
         }
     }
-    false
+    // A bare event on the `.git` directory itself (path ends at `.git`, no child)
+    // is just its entry list churning as `git status` rewrites `.git/index` on
+    // every load — Windows surfaces this as a directory event, and reacting to it
+    // re-triggers the reload endlessly. Real ref/HEAD changes arrive as
+    // `.git/<child>` (HEAD, refs/…, packed-refs) and still pass.
+    last_was_git_dir
 }
 
 #[cfg(test)]
@@ -206,5 +214,12 @@ mod tests {
         assert!(!super::is_noisy_path(Path::new(
             r"D:\repo\.git\packed-refs"
         )));
+    }
+
+    #[test]
+    fn bare_git_directory_event_is_filtered() {
+        // Windows reports a change on the `.git` dir itself as its entries churn
+        // during a status refresh; reacting would loop on every reload.
+        assert!(super::is_noisy_path(Path::new(r"D:\repo\.git")));
     }
 }

@@ -80,9 +80,6 @@ export function useRepoSession(options: RepoSessionOptions = {}): RepoSession {
   // While a user-initiated action runs (and briefly after), suppress the
   // external-change notification so the action's own ripple doesn't notify.
   const suppressNotifyUntilRef = useRef(0);
-  // Set when a watcher event arrives during the mute window, so the last change
-  // in a burst gets a trailing catch-up reload instead of being dropped.
-  const pendingReloadRef = useRef(false);
   const notifyRef = useRef(notify);
   useEffect(() => {
     notifyRef.current = notify;
@@ -217,44 +214,22 @@ export function useRepoSession(options: RepoSessionOptions = {}): RepoSession {
     if (!repoPath) return;
     let cancelled = false;
     let stop: (() => void) | null = null;
-    let trailingTimer: ReturnType<typeof setTimeout> | null = null;
-    pendingReloadRef.current = false;
-
-    // React to an external change: reload, but mute the watcher for the reload
-    // plus a short tail. The reload itself runs `git status` (rewrites
-    // `.git/index`) and a background fetch's ref churn can still be settling —
-    // those filesystem events would otherwise re-enter this callback and queue
-    // load after load forever, pinning the app in a permanent "busy" state.
-    // Anything observed while muted is remembered and caught up once after the
-    // tail, so the last change in a burst isn't lost (the catch-up is silent —
-    // the burst already notified).
-    const reload = (notifyChange: boolean) => {
-      if (cancelled) return;
-      pendingReloadRef.current = false;
-      suppressNotifyUntilRef.current = Infinity;
-      if (notifyChange) notifyRef.current?.("external-change");
-      void load(repoPath).finally(() => {
-        suppressNotifyUntilRef.current = Date.now() + SUPPRESS_TAIL_MS;
-        if (trailingTimer) clearTimeout(trailingTimer);
-        trailingTimer = setTimeout(() => {
-          if (!cancelled && pendingReloadRef.current) {
-            pendingReloadRef.current = false;
-            void load(repoPath);
-          }
-        }, SUPPRESS_TAIL_MS);
-      });
-    };
 
     git
       .watchRepo(repoPath, () => {
         if (cancelled) return;
-        // Within the mute window, just remember that something changed; the
-        // trailing catch-up (or the next un-muted event) will reflect it.
-        if (Date.now() < suppressNotifyUntilRef.current) {
-          pendingReloadRef.current = true;
-          return;
-        }
-        reload(true);
+        // Skip the echo of the user's own action — and of our own reload. A
+        // reload runs `git status`, which rewrites `.git/index` (filtered by the
+        // backend) and churns the `.git` dir; muting the watcher for the reload
+        // plus a short tail keeps any straggling event from re-entering here and
+        // queueing reload after reload, which would pin the app permanently
+        // "busy". Same guard run()/commit()/the background fetch already use.
+        if (Date.now() < suppressNotifyUntilRef.current) return;
+        suppressNotifyUntilRef.current = Infinity;
+        notifyRef.current?.("external-change");
+        void load(repoPath).finally(() => {
+          suppressNotifyUntilRef.current = Date.now() + SUPPRESS_TAIL_MS;
+        });
       })
       .then((s) => {
         if (cancelled) s();
@@ -266,7 +241,6 @@ export function useRepoSession(options: RepoSessionOptions = {}): RepoSession {
 
     return () => {
       cancelled = true;
-      if (trailingTimer) clearTimeout(trailingTimer);
       if (stop) stop();
     };
   }, [git, repoPath, load]);
