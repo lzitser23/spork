@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type MouseEvent } from "react";
 import { Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/format";
 import { computeGraph } from "@/lib/graph";
 import { GraphCell, ROW_H } from "@/components/CommitGraph";
+import { CommitContextMenu, type CommitActions } from "@/components/ContextMenu";
 import type { Commit, RefBadge } from "@/lib/git";
 
 const refClasses: Record<RefBadge["kind"], string> = {
@@ -31,13 +32,25 @@ export function CommitList({
   commits,
   selected,
   onSelect,
+  actions,
+  busy = false,
 }: {
   commits: Commit[];
   selected: string | null;
   onSelect: (hash: string) => void;
+  /** Right-click actions; the menu is disabled entirely when omitted. */
+  actions?: CommitActions;
+  busy?: boolean;
 }) {
   const [query, setQuery] = useState("");
+  const [menu, setMenu] = useState<{ commit: Commit; x: number; y: number } | null>(null);
   const graph = useMemo(() => computeGraph(commits), [commits]);
+
+  const openMenu = (commit: Commit) => (e: MouseEvent) => {
+    if (!actions) return;
+    e.preventDefault();
+    setMenu({ commit, x: e.clientX, y: e.clientY });
+  };
 
   const q = query.trim().toLowerCase();
   // Filtering hides commits, which would break the graph topology, so the lanes
@@ -53,6 +66,7 @@ export function CommitList({
     : commits;
 
   return (
+    <>
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-2.5 py-1 text-muted-foreground/60">
         <Search className="size-3 shrink-0" />
@@ -75,6 +89,7 @@ export function CommitList({
             <button
               key={c.hash}
               onClick={() => onSelect(c.hash)}
+              onContextMenu={openMenu(c)}
               style={{ height: ROW_H }}
               className={cn(
                 "flex w-full items-center gap-2 px-2 text-left",
@@ -112,5 +127,17 @@ export function CommitList({
         )}
       </div>
     </div>
+
+      {menu && actions && (
+        <CommitContextMenu
+          commit={menu.commit}
+          x={menu.x}
+          y={menu.y}
+          actions={actions}
+          busy={busy}
+          onClose={() => setMenu(null)}
+        />
+      )}
+    </>
   );
 }

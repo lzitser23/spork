@@ -1,5 +1,6 @@
 import type {
   Branch,
+  BranchMergeStrategy,
   Commit,
   CommitDetails,
   FileChange,
@@ -8,6 +9,7 @@ import type {
   PullRequest,
   Remote,
   RepoInfo,
+  ResetMode,
   ReviewVerdict,
   Stash,
   StatusEntry,
@@ -190,6 +192,29 @@ export function createFakeGit(overrides: Partial<FakeRepoState> = {}) {
     }),
     deleteBranch: call("deleteBranch", (_path: string, name: string) => {
       state.branches = state.branches.filter((b) => b.name !== name);
+      return "ok";
+    }),
+    revert: call("revert", (_path: string, hash: string) => {
+      const c = state.commits.find((x) => x.hash === hash);
+      addCommit(`Revert "${c?.subject ?? hash}"`);
+      return "ok";
+    }),
+    cherryPick: call("cherryPick", (_path: string, hash: string) => {
+      const c = state.commits.find((x) => x.hash === hash);
+      addCommit(c?.subject ?? `cherry-pick ${hash}`);
+      return "ok";
+    }),
+    reset: call("reset", (_path: string, hash: string, mode: ResetMode) => {
+      const i = state.commits.findIndex((x) => x.hash === hash);
+      if (i >= 0) {
+        state.commits = state.commits.slice(i);
+        state.info = { ...state.info, head: state.commits[0].short_hash };
+      }
+      if (mode === "hard") state.status = [];
+      return "ok";
+    }),
+    merge: call("merge", (_path: string, source: string, strategy: BranchMergeStrategy) => {
+      addCommit(strategy === "squash" ? `Squash merge ${source}` : `Merge ${source}`);
       return "ok";
     }),
     createTag: call("createTag", (_path: string, name: string) => {

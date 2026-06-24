@@ -217,10 +217,19 @@ export function useRepoSession(options: RepoSessionOptions = {}): RepoSession {
 
     git
       .watchRepo(repoPath, () => {
-        // Skip the echo of the user's own action — it already refreshed silently.
+        if (cancelled) return;
+        // Skip the echo of the user's own action — and of our own reload. A
+        // reload runs `git status`, which rewrites `.git/index` (filtered by the
+        // backend) and churns the `.git` dir; muting the watcher for the reload
+        // plus a short tail keeps any straggling event from re-entering here and
+        // queueing reload after reload, which would pin the app permanently
+        // "busy". Same guard run()/commit()/the background fetch already use.
         if (Date.now() < suppressNotifyUntilRef.current) return;
-        void load(repoPath);
+        suppressNotifyUntilRef.current = Infinity;
         notifyRef.current?.("external-change");
+        void load(repoPath).finally(() => {
+          suppressNotifyUntilRef.current = Date.now() + SUPPRESS_TAIL_MS;
+        });
       })
       .then((s) => {
         if (cancelled) s();

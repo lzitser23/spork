@@ -97,7 +97,12 @@ export interface PullRequest {
 }
 
 export type ReviewVerdict = "approve" | "comment" | "request-changes";
+/** Pull-request merge strategies, as the GitHub CLI (`gh pr merge`) names them. */
 export type MergeStrategy = "merge" | "squash" | "rebase";
+/** `git reset` modes, least to most destructive. */
+export type ResetMode = "soft" | "mixed" | "hard";
+/** Local branch-merge strategies (drag-and-drop merge dialog). */
+export type BranchMergeStrategy = "merge" | "no-ff" | "squash" | "ff-only" | "rebase";
 
 export interface RepoChangedPayload {
   path: string;
