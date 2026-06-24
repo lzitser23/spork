@@ -113,6 +113,42 @@ test("external changes reload and notify, but the user's own action is muted", a
   expect(notify).toHaveBeenCalledWith("external-change");
 });
 
+test("watcher reloads are rate-limited and never lost (no busy-forever loop)", async () => {
+  vi.useFakeTimers();
+  const notify = vi.fn();
+  const { fake, hook } = setup(createFakeGit(), { notify, fetchIntervalMs: 0 });
+
+  await act(async () => {
+    await hook.result.current.open("/repo");
+  });
+  const logs = () => fake.calls.filter((c) => c.method === "log").length;
+  const base = logs();
+
+  // A burst of external changes coalesces into ONE immediate reload — it does
+  // not chain a reload per event (the bug that pinned the app permanently
+  // "busy"). The extra events are remembered, not dropped.
+  await act(async () => {
+    fake.fireRepoChange();
+    fake.fireRepoChange();
+    fake.fireRepoChange();
+  });
+  expect(logs()).toBe(base + 1);
+  expect(notify).toHaveBeenCalledWith("external-change");
+  expect(hook.result.current.busy).toBe(false);
+
+  // The changes seen during the cooldown aren't lost: exactly one trailing
+  // catch-up reload fires after the tail, then it goes quiet (no runaway loop).
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2000);
+  });
+  expect(logs()).toBe(base + 2);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(logs()).toBe(base + 2);
+  expect(hook.result.current.busy).toBe(false);
+});
+
 test("background fetch notifies only when the remote tips actually move", async () => {
   vi.useFakeTimers();
   const notify = vi.fn();

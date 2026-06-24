@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Cloud, FolderOpen } from "lucide-react";
@@ -19,12 +19,14 @@ import { ChangesView } from "@/components/ChangesView";
 import { FileBrowser } from "@/components/FileBrowser";
 import { PullRequestsView } from "@/components/PullRequestsView";
 import { CloneDialog } from "@/components/CloneDialog";
+import { MergeDialog, PromptDialog } from "@/components/Modal";
+import type { CommitActions } from "@/components/ContextMenu";
 import { SporkLogo } from "@/components/SporkLogo";
 import { remoteHostLabel, remoteWebUrl } from "@/lib/remote";
 import { useGit } from "@/lib/gitClient";
 import { forgetRepo, recentRepos, rememberRepo } from "@/lib/recentRepos";
 import { useRepoSession, type SessionEvent } from "@/lib/repoSession";
-import type { Stash } from "@/lib/git";
+import type { BranchMergeStrategy, Stash } from "@/lib/git";
 
 function EmptyState({
   onOpen,
@@ -77,6 +79,10 @@ export default function App() {
   const [view, setView] = useState<View>("history");
   const [cloneOpen, setCloneOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>(() => recentRepos());
+  // Name-entry dialog for a commit's "branch/tag here" action.
+  const [prompt, setPrompt] = useState<{ kind: "branch" | "tag"; hash: string } | null>(null);
+  // Branch-merge dialog target, set when one branch is dropped onto another.
+  const [mergeReq, setMergeReq] = useState<{ source: string; target: string } | null>(null);
 
   // A different commit means its file list no longer applies.
   useEffect(() => {
@@ -194,6 +200,37 @@ export default function App() {
     [run],
   );
 
+  // Right-click actions on a commit. The two that need a name open a dialog;
+  // the rest run straight through the session (refresh + error handling free).
+  const short = (hash: string) => hash.slice(0, 7);
+  const commitActions: CommitActions = useMemo(
+    () => ({
+      onCheckout: (hash) => void run(`checkout ${short(hash)}`, (g, p) => g.checkout(p, hash)),
+      onCreateBranch: (hash) => setPrompt({ kind: "branch", hash }),
+      onCherryPick: (hash) =>
+        void run(`cherry-pick ${short(hash)}`, (g, p) => g.cherryPick(p, hash)),
+      onRevert: (hash) => void run(`revert ${short(hash)}`, (g, p) => g.revert(p, hash)),
+      onReset: (hash, mode) =>
+        void run(`reset --${mode} ${short(hash)}`, (g, p) => g.reset(p, hash, mode)),
+      onTag: (hash) => setPrompt({ kind: "tag", hash }),
+    }),
+    [run],
+  );
+
+  // Drag-drop merge: dropping `source` onto `target` merges source into target.
+  // Merging happens on the target, so check it out first when it isn't current.
+  const mergeBranches = useCallback(
+    (source: string, target: string, strategy: BranchMergeStrategy) => {
+      const targetIsCurrent =
+        snapshot?.branches.some((b) => b.is_current && b.name === target) ?? false;
+      void run(`merge ${source} → ${target}`, async (g, p) => {
+        if (!targetIsCurrent) await g.checkout(p, target);
+        await g.merge(p, source, strategy);
+      });
+    },
+    [run, snapshot],
+  );
+
   const stage = useCallback(
     (file: string) => void run("stage", (g, p) => g.stage(p, file)),
     [run],
@@ -280,6 +317,7 @@ export default function App() {
                 onCheckoutBranch={checkoutBranch}
                 onCreateBranch={createBranch}
                 onDeleteBranch={deleteBranch}
+                onMergeBranch={(source, target) => setMergeReq({ source, target })}
                 onCheckoutRemote={checkoutRemote}
                 onCreateTag={createTag}
                 onDeleteTag={deleteTag}
@@ -330,6 +368,8 @@ export default function App() {
                     commits={snapshot.commits}
                     selected={selectedHash}
                     onSelect={selectHash}
+                    actions={commitActions}
+                    busy={busy}
                   />
                 </ResizablePanel>
 
@@ -383,6 +423,29 @@ export default function App() {
             setCloneOpen(false);
             void session.open(p);
           }}
+        />
+      )}
+
+      {prompt && (
+        <PromptDialog
+          title={prompt.kind === "branch" ? "New branch at this commit" : "New tag at this commit"}
+          placeholder={prompt.kind === "branch" ? "branch-name" : "tag-name"}
+          onConfirm={(name) => {
+            if (prompt.kind === "branch")
+              void run(`branch ${name}`, (g, p) => g.createBranch(p, name, prompt.hash));
+            else void run(`tag ${name}`, (g, p) => g.createTag(p, name, prompt.hash));
+          }}
+          onClose={() => setPrompt(null)}
+        />
+      )}
+
+      {mergeReq && (
+        <MergeDialog
+          source={mergeReq.source}
+          target={mergeReq.target}
+          busy={busy}
+          onConfirm={(strategy) => mergeBranches(mergeReq.source, mergeReq.target, strategy)}
+          onClose={() => setMergeReq(null)}
         />
       )}
 

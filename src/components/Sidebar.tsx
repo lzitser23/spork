@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type DragEvent, type ReactNode } from "react";
 import {
   Archive,
   Box,
@@ -161,6 +161,15 @@ function RemoveBtn({
   );
 }
 
+/** Drag-to-merge wiring for a branch row (drop a branch onto this one to merge). */
+interface RowDrag {
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDragOver: (e: DragEvent) => void;
+  onDrop: () => void;
+  isTarget: boolean;
+}
+
 /** One ref row (branch or tag): checkout on click, delete via inline confirm. */
 function RefRow({
   name,
@@ -169,6 +178,7 @@ function RefRow({
   busy,
   onCheckout,
   onDelete,
+  drag,
 }: {
   name: string;
   current?: boolean;
@@ -176,12 +186,35 @@ function RefRow({
   busy: boolean;
   onCheckout: (name: string) => void;
   onDelete: (name: string) => void;
+  drag?: RowDrag;
 }) {
   return (
     <div
+      draggable={!!drag}
+      onDragStart={
+        drag
+          ? (e) => {
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", name);
+              drag.onDragStart();
+            }
+          : undefined
+      }
+      onDragEnd={drag?.onDragEnd}
+      onDragOver={drag?.onDragOver}
+      onDrop={
+        drag
+          ? (e) => {
+              e.preventDefault();
+              drag.onDrop();
+            }
+          : undefined
+      }
       className={cn(
         "mx-1 flex items-center gap-1 rounded-md px-2 py-1",
         current ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50",
+        drag && "cursor-grab active:cursor-grabbing",
+        drag?.isTarget && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/70",
       )}
     >
       <button
@@ -217,6 +250,7 @@ function RefSection({
   onCheckout,
   onCreate,
   onDelete,
+  onMerge,
 }: {
   title: string;
   items: { name: string; current?: boolean }[];
@@ -227,10 +261,14 @@ function RefSection({
   onCheckout: (name: string) => void;
   onCreate: (name: string) => void;
   onDelete: (name: string) => void;
+  /** When set, rows can be dragged onto one another to merge (source → target). */
+  onMerge?: (source: string, target: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [dragSource, setDragSource] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
 
   const submit = () => {
     const n = name.trim();
@@ -238,6 +276,32 @@ function RefSection({
     setCreating(false);
     if (n) onCreate(n);
   };
+
+  const rowDrag = (rowName: string): RowDrag | undefined =>
+    // No dragging while an action is in flight — matches every other mutating
+    // control here, and stops a merge racing a pull/push/another merge on .git.
+    onMerge && !busy
+      ? {
+          onDragStart: () => setDragSource(rowName),
+          onDragEnd: () => {
+            setDragSource(null);
+            setDragOver(null);
+          },
+          onDragOver: (e) => {
+            // preventDefault marks this row a valid drop target (and only then).
+            if (dragSource && dragSource !== rowName) {
+              e.preventDefault();
+              setDragOver(rowName);
+            }
+          },
+          onDrop: () => {
+            if (dragSource && dragSource !== rowName) onMerge(dragSource, rowName);
+            setDragSource(null);
+            setDragOver(null);
+          },
+          isTarget: dragOver === rowName,
+        }
+      : undefined;
 
   return (
     <div className="select-none">
@@ -297,6 +361,7 @@ function RefSection({
               busy={busy}
               onCheckout={onCheckout}
               onDelete={onDelete}
+              drag={rowDrag(it.name)}
             />
           ))}
         </div>
@@ -492,6 +557,7 @@ export function Sidebar({
   onCheckoutBranch,
   onCreateBranch,
   onDeleteBranch,
+  onMergeBranch,
   onCheckoutRemote,
   onCreateTag,
   onDeleteTag,
@@ -516,6 +582,7 @@ export function Sidebar({
   onCheckoutBranch: (name: string) => void;
   onCreateBranch: (name: string) => void;
   onDeleteBranch: (name: string) => void;
+  onMergeBranch: (source: string, target: string) => void;
   onCheckoutRemote: (remoteRef: string) => void;
   onCreateTag: (name: string) => void;
   onDeleteTag: (name: string) => void;
@@ -563,6 +630,7 @@ export function Sidebar({
         onCheckout={onCheckoutBranch}
         onCreate={onCreateBranch}
         onDelete={onDeleteBranch}
+        onMerge={onMergeBranch}
       />
 
       <Section title="Remote branches" count={remoteBranches.length} defaultOpen={false}>

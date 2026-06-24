@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { cn } from "@/lib/utils";
 import type { ImageContent } from "@/lib/git";
@@ -55,6 +55,42 @@ function signColor(line: string): string {
   return "text-foreground/40";
 }
 
+/** Height of one diff row in px — must match the `text-[12px] leading-[1.5]`
+ *  (12 × 1.5) container below; the virtualizer positions rows on this grid. */
+const DIFF_ROW_H = 18;
+/** Above this many lines, render only the visible window instead of a DOM node
+ *  per line — otherwise a 50k-line diff mounts 50k <div>s and freezes the pane. */
+const VIRTUAL_THRESHOLD = 800;
+/** Rows kept mounted just outside the viewport, so fast scrolling stays smooth. */
+const OVERSCAN = 24;
+
+/** One unified-diff line: syntax-highlighted tokens when available, else plain
+ *  text with per-line tint. `style` carries the absolute position when windowed. */
+function diffLine(
+  line: string,
+  i: number,
+  toks: Token[] | undefined,
+  style?: CSSProperties,
+) {
+  if (toks) {
+    return (
+      <div key={i} className={cn("whitespace-pre px-3", lineBg(line))} style={style}>
+        <span className={signColor(line)}>{line[0] ?? " "}</span>
+        {toks.map((t, j) => (
+          <span key={j} style={{ color: t.color }}>
+            {t.content}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div key={i} className={cn("whitespace-pre px-3", lineClass(line))} style={style}>
+      {line || " "}
+    </div>
+  );
+}
+
 /**
  * Render unified-diff text with per-line styling and best-effort syntax
  * highlighting (`file` picks the language). The fetch-free half of DiffView,
@@ -63,6 +99,33 @@ function signColor(line: string): string {
 export function DiffText({ diff, file }: { diff: string; file: string | null }) {
   // Per-line syntax tokens, keyed by line index (code lines only).
   const [hl, setHl] = useState<Record<number, Token[]> | null>(null);
+  const lines = useMemo(() => diff.split("\n"), [diff]);
+  // Longest line, for a stable horizontal-scroll extent in the windowed path:
+  // absolutely-positioned rows don't contribute to scrollWidth, so without this
+  // the scrollbar would jump as wide lines scroll in and out of the window.
+  const maxLen = useMemo(() => lines.reduce((m, l) => (l.length > m ? l.length : m), 0), [lines]);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(0);
+
+  // Measure the scroller's height for the window. Re-runs on `diff` because the
+  // ref only attaches on the large-diff branch, so switching a small diff to a
+  // large one in the same instance must (re)attach and measure; ResizeObserver
+  // also keeps it right as the surrounding panes are dragged. (jsdom stubs
+  // ResizeObserver to a no-op; the >800-line path never runs there anyway.)
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    setViewport(el.clientHeight);
+    const ro = new ResizeObserver(() => setViewport(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [diff]);
+  // A new diff starts at the top (a leftover scroll offset would show a blank gap).
+  useEffect(() => {
+    setScrollTop(0);
+    if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
+  }, [diff]);
 
   // Highlight the code lines of the diff (best-effort, syntax with diff context).
   useEffect(() => {
@@ -101,29 +164,50 @@ export function DiffText({ diff, file }: { diff: string; file: string | null }) 
       </div>
     );
 
-  const lines = diff.split("\n");
+  // Small diffs: plain flow layout — cheap, and byte-for-byte the old behavior.
+  if (lines.length <= VIRTUAL_THRESHOLD) {
+    return (
+      <div className="h-full overflow-auto py-1 text-[12px] leading-[1.5]">
+        {lines.map((line, i) => diffLine(line, i, hl?.[i]))}
+      </div>
+    );
+  }
+
+  // Large diffs: render only the rows in (and near) the viewport, absolutely
+  // positioned inside a full-height spacer so the scrollbar still spans it all.
+  const first = Math.max(0, Math.floor(scrollTop / DIFF_ROW_H) - OVERSCAN);
+  const last = Math.min(
+    lines.length,
+    Math.ceil((scrollTop + (viewport || 600)) / DIFF_ROW_H) + OVERSCAN,
+  );
+  const rows = [];
+  for (let i = first; i < last; i++) {
+    rows.push(
+      diffLine(lines[i], i, hl?.[i], {
+        position: "absolute",
+        top: i * DIFF_ROW_H,
+        left: 0,
+        height: DIFF_ROW_H,
+      }),
+    );
+  }
   return (
-    <div className="h-full overflow-auto py-1 text-[12px] leading-[1.5]">
-      {lines.map((line, i) => {
-        const toks = hl ? hl[i] : undefined;
-        if (toks) {
-          return (
-            <div key={i} className={cn("whitespace-pre px-3", lineBg(line))}>
-              <span className={signColor(line)}>{line[0] ?? " "}</span>
-              {toks.map((t, j) => (
-                <span key={j} style={{ color: t.color }}>
-                  {t.content}
-                </span>
-              ))}
-            </div>
-          );
-        }
-        return (
-          <div key={i} className={cn("whitespace-pre px-3", lineClass(line))}>
-            {line || " "}
-          </div>
-        );
-      })}
+    <div
+      ref={scrollerRef}
+      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      className="h-full overflow-auto py-1 text-[12px] leading-[1.5]"
+    >
+      <div
+        style={{
+          position: "relative",
+          height: lines.length * DIFF_ROW_H,
+          // `ch` is the monospace glyph width, so this spans the longest line
+          // (+ the rows' px-3 padding); keeps the scrollbar extent fixed.
+          minWidth: `calc(${maxLen}ch + 1.5rem)`,
+        }}
+      >
+        {rows}
+      </div>
     </div>
   );
 }

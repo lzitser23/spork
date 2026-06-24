@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import type {
   Branch,
+  BranchMergeStrategy,
   Commit,
   CommitDetails,
   FileChange,
@@ -14,6 +15,7 @@ import type {
   Remote,
   RepoChangedPayload,
   RepoInfo,
+  ResetMode,
   ReviewVerdict,
   Stash,
   StatusEntry,
@@ -47,10 +49,20 @@ export interface GitClient {
   remoteTips(path: string): Promise<string>;
 
   checkout(path: string, name: string): Promise<string>;
-  createBranch(path: string, name: string): Promise<string>;
+  /** Create a branch (and switch to it) at `startPoint`, or at HEAD if omitted. */
+  createBranch(path: string, name: string, startPoint?: string): Promise<string>;
   deleteBranch(path: string, name: string, force?: boolean): Promise<string>;
-  createTag(path: string, name: string): Promise<string>;
+  /** Tag `commit` (a hash / ref), or HEAD if omitted. */
+  createTag(path: string, name: string, commit?: string): Promise<string>;
   deleteTag(path: string, name: string): Promise<string>;
+  /** Revert a commit, creating an inverse commit (`git revert --no-edit`). */
+  revert(path: string, hash: string): Promise<string>;
+  /** Cherry-pick a commit onto the current branch. */
+  cherryPick(path: string, hash: string): Promise<string>;
+  /** Move the current branch to `hash` (soft / mixed / hard). */
+  reset(path: string, hash: string, mode: ResetMode): Promise<string>;
+  /** Merge `source` into the current branch with an explicit strategy. */
+  merge(path: string, source: string, strategy: BranchMergeStrategy): Promise<string>;
   addRemote(path: string, name: string, url: string): Promise<string>;
   removeRemote(path: string, name: string): Promise<string>;
   submoduleUpdate(path: string): Promise<string>;
@@ -116,11 +128,16 @@ export const tauriGitClient: GitClient = {
   remoteTips: (path) => invoke("git_remote_tips", { path }),
 
   checkout: (path, name) => invoke("git_checkout", { path, name }),
-  createBranch: (path, name) => invoke("git_create_branch", { path, name }),
+  createBranch: (path, name, startPoint) =>
+    invoke("git_create_branch", { path, name, startPoint }),
   deleteBranch: (path, name, force = false) =>
     invoke("git_delete_branch", { path, name, force }),
-  createTag: (path, name) => invoke("git_create_tag", { path, name }),
+  createTag: (path, name, commit) => invoke("git_create_tag", { path, name, commit }),
   deleteTag: (path, name) => invoke("git_delete_tag", { path, name }),
+  revert: (path, hash) => invoke("git_revert", { path, hash }),
+  cherryPick: (path, hash) => invoke("git_cherry_pick", { path, hash }),
+  reset: (path, hash, mode) => invoke("git_reset", { path, hash, mode }),
+  merge: (path, source, strategy) => invoke("git_merge", { path, source, strategy }),
   addRemote: (path, name, url) => invoke("git_add_remote", { path, name, url }),
   removeRemote: (path, name) => invoke("git_remove_remote", { path, name }),
   submoduleUpdate: (path) => invoke("git_submodule_update", { path }),

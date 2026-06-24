@@ -475,10 +475,83 @@ pub fn git_commit(path: String, message: String) -> Result<String, String> {
     run_git(&path, &["commit", "-m", &message])
 }
 
-/// Create a new branch from the current HEAD and switch to it.
+/// Create a new branch and switch to it. Branches from `start_point` (a commit
+/// hash / ref) when given, else from the current HEAD. The name is consumed as
+/// `-b`'s value, so it can't be parsed as an option (invariant #3).
 #[tauri::command]
-pub fn git_create_branch(path: String, name: String) -> Result<String, String> {
-    run_git(&path, &["checkout", "-b", &name])
+pub fn git_create_branch(
+    path: String,
+    name: String,
+    start_point: Option<String>,
+) -> Result<String, String> {
+    match start_point.as_deref() {
+        Some(start) => run_git(&path, &["checkout", "-b", &name, start]),
+        None => run_git(&path, &["checkout", "-b", &name]),
+    }
+}
+
+/// Revert a commit, creating a new commit that undoes it (`--no-edit` keeps the
+/// auto-generated "Revert …" message). A conflicting revert leaves the working
+/// tree mid-revert and surfaces git's error to the UI.
+#[tauri::command]
+pub fn git_revert(path: String, hash: String) -> Result<String, String> {
+    run_git(&path, &["revert", "--no-edit", &hash])
+}
+
+/// Cherry-pick a commit onto the current branch. Conflicts surface as an error
+/// (the repo is then mid-cherry-pick, resolvable from the changes view).
+#[tauri::command]
+pub fn git_cherry_pick(path: String, hash: String) -> Result<String, String> {
+    run_git(&path, &["cherry-pick", &hash])
+}
+
+/// Move the current branch to `hash`. `mode` is `soft` (keep index + tree),
+/// `mixed` (keep tree, reset index), or `hard` (discard everything) — the
+/// destructive one is gated behind a confirm in the UI.
+#[tauri::command]
+pub fn git_reset(path: String, hash: String, mode: String) -> Result<String, String> {
+    let flag = match mode.as_str() {
+        "soft" => "--soft",
+        "mixed" => "--mixed",
+        "hard" => "--hard",
+        _ => return Err(format!("unknown reset mode: {mode}")),
+    };
+    run_git(&path, &["reset", flag, &hash])
+}
+
+/// Merge `source` into the current branch with an explicit strategy, so git
+/// never drops into an interactive editor:
+///   * `merge`   — fast-forward when possible, else a merge commit
+///   * `no-ff`   — always a merge commit
+///   * `ff-only` — refuse anything that isn't a fast-forward
+///   * `squash`  — collapse source's commits into one staged change, committed
+///   * `rebase`  — replay the current branch's commits on top of source
+/// Conflicts (or a refused ff-only) surface as an error with the repo left in
+/// the resolvable mid-merge / mid-rebase state.
+#[tauri::command]
+pub fn git_merge(path: String, source: String, strategy: String) -> Result<String, String> {
+    match strategy.as_str() {
+        "merge" => run_git(&path, &["merge", "--no-edit", "--", &source]),
+        "no-ff" => run_git(&path, &["merge", "--no-ff", "--no-edit", "--", &source]),
+        "ff-only" => run_git(&path, &["merge", "--ff-only", "--", &source]),
+        "squash" => {
+            run_git(&path, &["merge", "--squash", "--", &source])?;
+            // --squash stages the changes but writes no commit. When `source` is
+            // already merged it stages nothing (and writes no SQUASH_MSG), so a
+            // `commit` would error with "nothing to commit"; report the no-op the
+            // way the other strategies do instead. `diff --cached --quiet` exits
+            // non-zero exactly when there IS something staged.
+            if run_git(&path, &["diff", "--cached", "--quiet"]).is_err() {
+                run_git(&path, &["commit", "--no-edit"])
+            } else {
+                Ok("Already up to date.".to_string())
+            }
+        }
+        // rebase doesn't take a `--` separator the way merge does; `source` is a
+        // ref name from our own branch list, not free text.
+        "rebase" => run_git(&path, &["rebase", &source]),
+        _ => Err(format!("unknown merge strategy: {strategy}")),
+    }
 }
 
 /// Delete a branch. `force` uses `-D` (drops unmerged work); otherwise `-d`
@@ -547,11 +620,16 @@ pub fn git_stash_drop(path: String, reff: String) -> Result<String, String> {
     run_git(&path, &["stash", "drop", &reff])
 }
 
-/// Create a lightweight tag at HEAD.
+/// Create a lightweight tag at `commit` (a hash / ref), or at HEAD when none is
+/// given.
 #[tauri::command]
-pub fn git_create_tag(path: String, name: String) -> Result<String, String> {
-    // `--` so a name from the dialog can't be parsed as a `git tag` option.
-    run_git(&path, &["tag", "--", &name])
+pub fn git_create_tag(path: String, name: String, commit: Option<String>) -> Result<String, String> {
+    // `--` so a name from the dialog can't be parsed as a `git tag` option;
+    // everything after it is positional (`<tagname> [<commit>]`).
+    match commit.as_deref() {
+        Some(c) => run_git(&path, &["tag", "--", &name, c]),
+        None => run_git(&path, &["tag", "--", &name]),
+    }
 }
 
 /// Delete a tag.
