@@ -57,7 +57,17 @@ jobs:
           workspaces: src-tauri
       - run: npm ci
       # One dmg that runs on both Apple Silicon and Intel Macs.
+      # Tauri signs and notarizes automatically when these env vars are set:
+      # the certificate ones import a Developer ID Application identity into a
+      # temporary keychain; the APPLE_ID ones drive notarization (+ stapling).
       - run: npm run tauri build -- --bundles dmg --target universal-apple-darwin
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - uses: actions/upload-artifact@v4
         with:
           name: Spork-macos-dmg
