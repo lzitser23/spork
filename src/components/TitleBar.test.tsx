@@ -25,12 +25,16 @@ function fakeChrome(maximized = false): WindowChromeClient {
   };
 }
 
-function renderTitleBar(chrome = fakeChrome()) {
+function renderTitleBar(
+  chrome = fakeChrome(),
+  overrides: Partial<Parameters<typeof TitleBar>[0]> = {},
+) {
   const props = {
     repo,
     busy: false,
     webUrl: "https://github.com/example/spork",
     hostLabel: "GitHub",
+    hasRemote: true,
     recentRepos: [repo.path, "D:\\DEV\\other-repo"],
     onOpenRecent: vi.fn(),
     onRefresh: vi.fn(),
@@ -41,7 +45,9 @@ function renderTitleBar(chrome = fakeChrome()) {
     onPush: vi.fn(),
     onStash: vi.fn(),
     onOpenWebUrl: vi.fn(),
+    onLinkRemote: vi.fn(),
     windowChrome: chrome,
+    ...overrides,
   };
 
   render(<TitleBar {...props} />);
@@ -61,6 +67,20 @@ test("renders repo identity and preserves git toolbar actions", () => {
   expect(screen.getByRole("button", { name: /github/i })).toBeEnabled();
   expect(screen.getByRole("button", { name: /clone/i })).toBeEnabled();
   expect(screen.getByRole("button", { name: /open/i })).toBeEnabled();
+});
+
+test("offers a Link action only when the repo has no remote", async () => {
+  const user = userEvent.setup();
+  const props = renderTitleBar(fakeChrome(), { hasRemote: false, webUrl: null });
+
+  expect(screen.queryByRole("button", { name: /github/i })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /link/i }));
+  expect(props.onLinkRemote).toHaveBeenCalledTimes(1);
+});
+
+test("hides the Link action once a remote is configured", () => {
+  renderTitleBar();
+  expect(screen.queryByRole("button", { name: /link/i })).not.toBeInTheDocument();
 });
 
 test("marks the title bar as draggable while blocking action and window-control zones", () => {
