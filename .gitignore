@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+
 # Claude Code local (per-machine) settings — shared settings.json would be tracked
 .claude/settings.local.json
 
@@ -20,8 +27,13 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# Test output
+coverage
+test-results/
