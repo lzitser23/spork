@@ -78,6 +78,7 @@ export default function App() {
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [view, setView] = useState<View>("history");
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [linkRemoteOpen, setLinkRemoteOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>(() => recentRepos());
   // Name-entry dialog for a commit's "branch/tag here" action.
   const [prompt, setPrompt] = useState<{ kind: "branch" | "tag"; hash: string } | null>(null);
@@ -191,6 +192,21 @@ export default function App() {
     },
     [run],
   );
+  // One-click remote linking: origin + fetch + push in a single action, so a
+  // repo without a remote ends up fully connected (upstream set — push falls
+  // back to `push -u origin HEAD` when the branch has none) to the pasted URL.
+  const linkRemote = useCallback(
+    (url: string) => {
+      const u = url.trim();
+      if (!u) return;
+      void run("link remote", async (g, p) => {
+        await g.addRemote(p, "origin", u);
+        await g.fetch(p);
+        await g.push(p);
+      });
+    },
+    [run],
+  );
   const removeRemote = useCallback(
     (name: string) => void run(`remove remote ${name}`, (g, p) => g.removeRemote(p, name)),
     [run],
@@ -275,6 +291,7 @@ export default function App() {
         busy={busy}
         webUrl={webUrl}
         hostLabel={hostLabel}
+        hasRemote={(snapshot?.remotes.length ?? 0) > 0}
         recentRepos={recent}
         onOpenRecent={(p) => void openRecent(p)}
         onRefresh={refresh}
@@ -287,6 +304,7 @@ export default function App() {
         onOpenWebUrl={() => {
           if (webUrl) openUrl(webUrl).catch((e) => toast(`open link: ${String(e)}`));
         }}
+        onLinkRemote={() => setLinkRemoteOpen(true)}
       />
 
       {error && (
@@ -423,6 +441,16 @@ export default function App() {
             setCloneOpen(false);
             void session.open(p);
           }}
+        />
+      )}
+
+      {linkRemoteOpen && (
+        <PromptDialog
+          title="Link a remote repository"
+          placeholder="https://github.com/you/repo.git"
+          confirmLabel="Link"
+          onConfirm={linkRemote}
+          onClose={() => setLinkRemoteOpen(false)}
         />
       )}
 

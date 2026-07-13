@@ -12,6 +12,7 @@ import {
   ExternalLink,
   FolderOpen,
   GitBranch,
+  Link2,
   Minus,
   RefreshCw,
   Square,
@@ -108,6 +109,7 @@ export function TitleBar({
   busy,
   webUrl,
   hostLabel,
+  hasRemote,
   recentRepos,
   onOpenRecent,
   onRefresh,
@@ -118,12 +120,15 @@ export function TitleBar({
   onPush,
   onStash,
   onOpenWebUrl,
+  onLinkRemote,
   windowChrome = tauriWindowChrome,
 }: {
   repo: RepoInfo | null;
   busy: boolean;
   webUrl: string | null;
   hostLabel: string;
+  /** Whether the repo has any remote configured — hides/shows the Link action. */
+  hasRemote: boolean;
   /** Recently opened repo roots, most recent first. */
   recentRepos: string[];
   onOpenRecent: (path: string) => void;
@@ -135,6 +140,7 @@ export function TitleBar({
   onPush: () => void | Promise<void>;
   onStash: () => void | Promise<void>;
   onOpenWebUrl: () => void;
+  onLinkRemote: () => void;
   windowChrome?: WindowChromeClient;
 }) {
   const [maximized, setMaximized] = useState(false);
@@ -281,6 +287,13 @@ export function TitleBar({
                 <Hint label={`Open on ${hostLabel} in your browser`}>
                   <Button size="xs" variant="ghost" onClick={onOpenWebUrl}>
                     <ExternalLink /> {hostLabel}
+                  </Button>
+                </Hint>
+              )}
+              {!hasRemote && (
+                <Hint label="Link a remote — adds origin, fetches, and pushes the current branch">
+                  <Button size="xs" variant="ghost" onClick={onLinkRemote} disabled={busy}>
+                    <Link2 /> Link
                   </Button>
                 </Hint>
               )}
