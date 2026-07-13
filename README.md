@@ -72,22 +72,17 @@ your repositories; there is no telemetry and no network traffic beyond what
 
 ## Installation
 
-### Download a build
+### Downloads
 
-CI builds artifacts for every push to `main` — grab the latest from the
-[Actions page](https://github.com/lzitser23/spork/actions) (the `build`
-workflow).
-
-| Platform | Artifact | Notes |
+| Platform | Download | Notes |
 | --- | --- | --- |
-| Windows | `Spork-windows-portable` | Single portable `spork.exe`; WebView2 ships with Windows 10/11, no installer needed. |
-| macOS | `Spork-macos-dmg` | Universal DMG (Apple Silicon + Intel). |
+| Windows | [spork-windows-x64-portable.exe](https://github.com/lzitser23/spork/releases/download/v0.1.0/spork-windows-x64-portable.exe) | Portable single exe, no installer; WebView2 ships with Windows 10/11. |
+| macOS | [spork-macos-universal.dmg](https://github.com/lzitser23/spork/releases/download/v0.1.0/spork-macos-universal.dmg) | Universal DMG (Apple Silicon + Intel), signed and notarized. |
 
-**Windows:** binaries are currently unsigned, so SmartScreen may warn on first
+All versions are on the [releases page](https://github.com/lzitser23/spork/releases).
+
+**Windows:** the exe is currently unsigned, so SmartScreen may warn on first
 run — choose "More info" → "Run anyway".
-
-**macOS:** builds are not yet notarized; right-click → Open the app the first
-time to get past Gatekeeper.
 
 ### Build from source
 
@@ -213,5 +208,11 @@ API that the components render.
 - [shiki](https://shiki.style/)
 - [Lucide](https://lucide.dev/)
 - [JetBrains Mono](https://www.jetbrains.com/lp/mono/)
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Lior Zitser
 
 ---
