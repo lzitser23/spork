@@ -89,9 +89,11 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          mv dist/Spork-windows-portable/spork.exe spork-windows-x64-portable.exe
+          mv dist/Spork-macos-dmg/*.dmg spork-macos-universal.dmg
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Spork $GITHUB_REF_NAME" \
             --generate-notes \
-            dist/Spork-windows-portable/spork.exe \
-            dist/Spork-macos-dmg/*.dmg
+            spork-windows-x64-portable.exe \
+            spork-macos-universal.dmg
