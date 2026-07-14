@@ -15,6 +15,13 @@ use crate::git::{command_output, describe_command_error, new_command, CommandErr
 /// frontend turns into setup instructions instead of a raw OS error.
 fn run_gh(repo: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = new_command("gh");
+    // Apps launched from Finder inherit launchd's minimal PATH, which lacks
+    // Homebrew's directories — a brew-installed gh would look missing.
+    #[cfg(target_os = "macos")]
+    {
+        let path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{path}:/opt/homebrew/bin:/usr/local/bin"));
+    }
     cmd.current_dir(repo).args(args);
     let output = command_output(cmd, NETWORK_TIMEOUT).map_err(|e| match e {
         CommandError::Launch(e) if e.kind() == std::io::ErrorKind::NotFound => {

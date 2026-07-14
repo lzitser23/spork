@@ -78,6 +78,9 @@ function DecisionPill({ pr }: { pr: PullRequest }) {
 function GhHelp({ error, onRetry }: { error: string; onRetry: () => void }) {
   const notInstalled = error === "gh-not-installed";
   const needsAuth = /auth login|not logged in/i.test(error);
+  const installCmd = navigator.userAgent.includes("Mac")
+    ? "brew install gh"
+    : "winget install GitHub.cli";
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 border-t border-border px-6 text-center">
       <GitPullRequest className="size-8 text-muted-foreground/40" />
@@ -93,7 +96,7 @@ function GhHelp({ error, onRetry }: { error: string; onRetry: () => void }) {
         <div className="flex flex-col gap-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-left text-[12px] text-muted-foreground">
           {notInstalled && (
             <div>
-              1. <span className="text-foreground">winget install GitHub.cli</span>
+              1. <span className="text-foreground">{installCmd}</span>
             </div>
           )}
           <div>

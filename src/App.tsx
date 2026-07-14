@@ -26,6 +26,7 @@ import { remoteHostLabel, remoteWebUrl } from "@/lib/remote";
 import { useGit } from "@/lib/gitClient";
 import { forgetRepo, recentRepos, rememberRepo } from "@/lib/recentRepos";
 import { useRepoSession, type SessionEvent } from "@/lib/repoSession";
+import { checkForUpdate, dismissUpdate } from "@/lib/updateCheck";
 import type { BranchMergeStrategy, Stash } from "@/lib/git";
 
 function EmptyState({
@@ -116,6 +117,29 @@ export default function App() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // One check per launch: if GitHub has a newer release, offer it as a toast.
+  // Silent on every failure (offline, rate-limited, no releases yet) — an
+  // update check should never surface an error.
+  useEffect(() => {
+    checkForUpdate().then((update) => {
+      if (!update) return;
+      const done = () => dismissUpdate(update.version);
+      toast(`Spork ${update.version} is available`, {
+        id: "release-update",
+        duration: Infinity,
+        closeButton: true,
+        onDismiss: done,
+        action: {
+          label: "Download",
+          onClick: () => {
+            done();
+            void openUrl(update.url).catch(() => {});
+          },
+        },
+      });
+    }, () => {});
   }, []);
 
   const openRecent = useCallback(
