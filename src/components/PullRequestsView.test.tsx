@@ -124,3 +124,20 @@ test("a missing gh CLI shows setup instructions instead of an error dump", async
   expect(screen.getByText(/winget install GitHub.cli/i)).toBeInTheDocument();
   expect(screen.getByText(/gh auth login/i)).toBeInTheDocument();
 });
+
+test("on macOS the install instruction is Homebrew, not winget", async () => {
+  Object.defineProperty(window.navigator, "userAgent", {
+    value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+    configurable: true,
+  });
+  try {
+    const fake = createFakeGit();
+    fake.state.errors.prList = "gh-not-installed";
+    setup(fake);
+
+    expect(await screen.findByText(/brew install gh/i)).toBeInTheDocument();
+    expect(screen.queryByText(/winget/i)).not.toBeInTheDocument();
+  } finally {
+    Reflect.deleteProperty(window.navigator, "userAgent");
+  }
+});
