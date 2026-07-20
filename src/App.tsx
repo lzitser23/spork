@@ -18,6 +18,7 @@ import { DiffView } from "@/components/DiffView";
 import { ChangesView } from "@/components/ChangesView";
 import { FileBrowser } from "@/components/FileBrowser";
 import { PullRequestsView } from "@/components/PullRequestsView";
+import { PushProgress } from "@/components/PushProgress";
 import { CloneDialog } from "@/components/CloneDialog";
 import { MergeDialog, PromptDialog } from "@/components/Modal";
 import type { CommitActions } from "@/components/ContextMenu";
@@ -90,6 +91,25 @@ export default function App() {
   useEffect(() => {
     setSelectedFile(null);
   }, [selectedHash]);
+
+  // Latest git progress line of a running push (backend `push-progress`
+  // events). Cleared when the session goes idle — the push is over either way.
+  const [pushProgress, setPushProgress] = useState<string | null>(null);
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void git.onPushProgress(setPushProgress).then((s) => {
+      if (cancelled) s();
+      else stop = s;
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [git]);
+  useEffect(() => {
+    if (!busy) setPushProgress(null);
+  }, [busy]);
 
   // Every successfully opened repo goes to the front of the recent list
   // (snapshot.info.path is the resolved repo root, so entries are canonical).
@@ -490,6 +510,8 @@ export default function App() {
           onClose={() => setPrompt(null)}
         />
       )}
+
+      {busy && pushProgress && <PushProgress line={pushProgress} />}
 
       {mergeReq && (
         <MergeDialog

@@ -207,6 +207,75 @@ fn run_git_diff(repo: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Run a blocking closure off the main thread. Tauri executes sync commands on
+/// the main thread, so anything that can take long (network transfers, `gh`
+/// calls) must go through here or it freezes the UI for its whole duration.
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Like [`run_git`], but streams stderr to the frontend as `push-progress`
+/// events while the command runs. Git writes transfer progress to stderr,
+/// rewriting lines in place with `\r`, so both `\r` and `\n` end a line.
+fn run_git_progress(repo: &str, args: &[&str], app: &tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+
+    let describe = |e: CommandError| describe_command_error("git", args, e, NETWORK_TIMEOUT);
+    let mut cmd = new_command("git");
+    cmd.current_dir(repo).args(args);
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| describe(CommandError::Launch(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| describe(CommandError::OutputReader))?;
+    let stderr = child.stderr.take().ok_or_else(|| describe(CommandError::OutputReader))?;
+
+    let stdout = collect_output(stdout);
+    let app = app.clone();
+    let stderr = thread::spawn(move || {
+        let mut all = Vec::new();
+        let mut line = Vec::new();
+        let mut reader = std::io::BufReader::new(stderr);
+        let mut byte = [0u8; 1];
+        let flush = |line: &mut Vec<u8>| {
+            let text = String::from_utf8_lossy(line).trim().to_string();
+            if !text.is_empty() {
+                let _ = app.emit("push-progress", &text);
+            }
+            line.clear();
+        };
+        while let Ok(1) = reader.read(&mut byte) {
+            all.push(byte[0]);
+            if byte[0] == b'\r' || byte[0] == b'\n' {
+                flush(&mut line);
+            } else {
+                line.push(byte[0]);
+            }
+        }
+        flush(&mut line);
+        all
+    });
+
+    let status = wait_with_timeout(child, NETWORK_TIMEOUT).map_err(describe)?;
+    let stdout = stdout.join().map_err(|_| describe(CommandError::OutputReader))?;
+    let stderr = stderr.join().map_err(|_| describe(CommandError::OutputReader))?;
+    if !status.success() {
+        let err = String::from_utf8_lossy(&stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            format!("git {} failed", args.join(" "))
+        } else {
+            err
+        });
+    }
+    Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+}
+
 /// Like [`run_git`], but returns raw stdout bytes — for binary output (e.g.
 /// `git show <rev>:<file>` on an image blob), which the lossy-UTF-8 string
 /// wrappers would corrupt.
@@ -521,30 +590,34 @@ pub fn working_diff(path: String, file: String) -> Result<String, String> {
 
 /// Fetch from all remotes (prunes deleted branches).
 #[tauri::command]
-pub fn git_fetch(path: String) -> Result<String, String> {
-    run_git_network(&path, &["fetch", "--all", "--prune"])
+pub async fn git_fetch(path: String) -> Result<String, String> {
+    blocking(move || run_git_network(&path, &["fetch", "--all", "--prune"])).await
 }
 
 /// Fast-forward pull.
 #[tauri::command]
-pub fn git_pull(path: String) -> Result<String, String> {
-    run_git_network(&path, &["pull", "--ff-only"])
+pub async fn git_pull(path: String) -> Result<String, String> {
+    blocking(move || run_git_network(&path, &["pull", "--ff-only"])).await
 }
 
 /// Push the current branch. If it has no upstream yet (e.g. a branch just
-/// created locally), publish it to `origin` and set up tracking.
+/// created locally), publish it to `origin` and set up tracking. Transfer
+/// progress streams to the frontend as `push-progress` events.
 #[tauri::command]
-pub fn git_push(path: String) -> Result<String, String> {
-    let has_upstream = run_git(
-        &path,
-        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-    )
-    .is_ok();
-    if has_upstream {
-        run_git_network(&path, &["push"])
-    } else {
-        run_git_network(&path, &["push", "-u", "origin", "HEAD"])
-    }
+pub async fn git_push(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    blocking(move || {
+        let has_upstream = run_git(
+            &path,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        )
+        .is_ok();
+        if has_upstream {
+            run_git_progress(&path, &["push", "--progress"], &app)
+        } else {
+            run_git_progress(&path, &["push", "--progress", "-u", "origin", "HEAD"], &app)
+        }
+    })
+    .await
 }
 
 /// Stash the working-tree changes (`git stash`).
@@ -780,8 +853,8 @@ pub fn git_submodules(path: String) -> Result<Vec<String>, String> {
 
 /// Initialize and update all submodules recursively.
 #[tauri::command]
-pub fn git_submodule_update(path: String) -> Result<String, String> {
-    run_git(&path, &["submodule", "update", "--init", "--recursive"])
+pub async fn git_submodule_update(path: String) -> Result<String, String> {
+    blocking(move || run_git(&path, &["submodule", "update", "--init", "--recursive"])).await
 }
 
 /// Clone `url` into a new folder under `parent_dir`; returns the new repo path.
@@ -790,37 +863,40 @@ pub fn git_submodule_update(path: String) -> Result<String, String> {
 /// Credential Manager on Windows), so private GitHub repos trigger the normal
 /// browser sign-in / stored token — Spork never handles credentials itself.
 #[tauri::command]
-pub fn git_clone(url: String, parent_dir: String) -> Result<String, String> {
-    let name = url
-        .trim()
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or("repo")
-        .trim_end_matches(".git");
-    let name = if name.is_empty() { "repo" } else { name };
-    let target = Path::new(&parent_dir).join(name);
-    let target_str = target.to_string_lossy().into_owned();
-    // `url` is free text pasted into the clone dialog, so harden two ways:
-    //   * `--` ends option parsing, so a URL like `--upload-pack=…` is treated
-    //     as a repo name, not a git flag.
-    //   * disabling the `ext`/`fd` transports kills the remote-helper RCE class
-    //     (`ext::sh -c …`) regardless of the local git's protocol defaults,
-    //     which vary by platform.
-    run_git_network(
-        &parent_dir,
-        &[
-            "-c",
-            "protocol.ext.allow=never",
-            "-c",
-            "protocol.fd.allow=never",
-            "clone",
-            "--",
-            &url,
-            &target_str,
-        ],
-    )?;
-    Ok(target_str)
+pub async fn git_clone(url: String, parent_dir: String) -> Result<String, String> {
+    blocking(move || {
+        let name = url
+            .trim()
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("repo")
+            .trim_end_matches(".git");
+        let name = if name.is_empty() { "repo" } else { name };
+        let target = Path::new(&parent_dir).join(name);
+        let target_str = target.to_string_lossy().into_owned();
+        // `url` is free text pasted into the clone dialog, so harden two ways:
+        //   * `--` ends option parsing, so a URL like `--upload-pack=…` is treated
+        //     as a repo name, not a git flag.
+        //   * disabling the `ext`/`fd` transports kills the remote-helper RCE class
+        //     (`ext::sh -c …`) regardless of the local git's protocol defaults,
+        //     which vary by platform.
+        run_git_network(
+            &parent_dir,
+            &[
+                "-c",
+                "protocol.ext.allow=never",
+                "-c",
+                "protocol.fd.allow=never",
+                "clone",
+                "--",
+                &url,
+                &target_str,
+            ],
+        )?;
+        Ok(target_str)
+    })
+    .await
 }
 
 /// Add a remote (e.g. `origin` -> a GitHub URL) to an existing repo.
