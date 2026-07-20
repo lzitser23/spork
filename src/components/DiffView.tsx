@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { cn } from "@/lib/utils";
+import { Loading } from "@/components/Loading";
 import type { ImageContent } from "@/lib/git";
 import { useGit } from "@/lib/gitClient";
 import { highlightLines, langForPath, type Token } from "@/lib/highlight";
@@ -312,8 +313,7 @@ function ImageDiffView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [git, repoPath, key]);
 
-  if (loading)
-    return <div className="p-3 text-muted-foreground/60">loading image…</div>;
+  if (loading) return <Loading label="loading image…" />;
   if (!before && !after)
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground/50">
@@ -401,8 +401,7 @@ function TextDiffView({
         select a file to view its diff
       </div>
     );
-  if (loading)
-    return <div className="p-3 text-muted-foreground/60">loading diff…</div>;
+  if (loading) return <Loading label="loading diff…" />;
   if (error) return <div className="p-3 text-destructive">{error}</div>;
 
   return <DiffText diff={diff} file={targetFile} />;

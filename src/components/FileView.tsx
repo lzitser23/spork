@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { Loading } from "@/components/Loading";
 import type { FileContent, ImageContent } from "@/lib/git";
 import { useGit } from "@/lib/gitClient";
 import { highlightLines, langForPath, type Token } from "@/lib/highlight";
@@ -67,7 +68,7 @@ export function FileView({
   if (error) return <div className="p-3 text-destructive">{error}</div>;
 
   if (isImage) {
-    if (!image) return <div className="p-3 text-muted-foreground/60">loading…</div>;
+    if (!image) return <Loading />;
     if (image.too_large)
       return (
         <div className="flex h-full items-center justify-center text-muted-foreground/50">
@@ -100,7 +101,7 @@ export function FileView({
     );
   }
 
-  if (!content) return <div className="p-3 text-muted-foreground/60">loading…</div>;
+  if (!content) return <Loading />;
   if (content.binary)
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground/50">

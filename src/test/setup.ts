@@ -9,6 +9,18 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
 
+// jsdom has no matchMedia; the dot-matrix loaders query prefers-reduced-motion.
+window.matchMedia ??= ((query: string) => ({
+  matches: false,
+  media: query,
+  onchange: null,
+  addEventListener() {},
+  removeEventListener() {},
+  addListener() {},
+  removeListener() {},
+  dispatchEvent: () => false,
+})) as unknown as typeof window.matchMedia;
+
 // react-resizable-panels hit-tests every document-level pointerdown against
 // the resize handles' getBoundingClientRect. jsdom reports (0,0,0,0) for all
 // elements, so every simulated click "hits" a handle, which preventDefaults

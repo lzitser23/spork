@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { FolderInput, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { DotmSquare3 } from "@/components/ui/dotm-square-3";
 import { useGit } from "@/lib/gitClient";
 
 const inputClass =
@@ -106,7 +107,13 @@ export function CloneDialog({
             onClick={doClone}
             disabled={busy || !url.trim() || !dir}
           >
-            {busy ? "Cloning…" : "Clone"}
+            {busy ? (
+              <>
+                <DotmSquare3 size={12} dotSize={2} ariaLabel="Cloning" /> Cloning…
+              </>
+            ) : (
+              "Clone"
+            )}
           </Button>
         </div>
 
