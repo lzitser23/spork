@@ -27,6 +27,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { DiffText } from "@/components/DiffView";
+import { Loading } from "@/components/Loading";
 import { relativeTime } from "@/lib/format";
 import { useGit } from "@/lib/gitClient";
 import { splitPrDiff, type PrFileDiff } from "@/lib/prDiff";
@@ -235,9 +236,10 @@ export function PullRequestsView({
   if (error) return <GhHelp error={error} onRetry={() => void load()} />;
   if (prs === null)
     return (
-      <div className="flex h-full items-center justify-center border-t border-border text-muted-foreground/60">
-        loading pull requests…
-      </div>
+      <Loading
+        label="loading pull requests…"
+        className="h-full justify-center border-t border-border p-0"
+      />
     );
   if (prs.length === 0)
     return (
@@ -421,7 +423,7 @@ export function PullRequestsView({
                 {diffError ? (
                   <div className="p-3 text-destructive">{diffError}</div>
                 ) : files === null ? (
-                  <div className="p-3 text-muted-foreground/60">loading diff…</div>
+                  <Loading label="loading diff…" />
                 ) : files.length === 0 ? (
                   <div className="flex h-full items-center justify-center text-muted-foreground/50">
                     no changes

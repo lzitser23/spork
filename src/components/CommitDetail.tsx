@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import { Loading } from "@/components/Loading";
 import { fullDate, statusStyle } from "@/lib/format";
 import type { CommitDetails, FileChange } from "@/lib/git";
 import { useGit } from "@/lib/gitClient";
@@ -54,8 +55,7 @@ export function CommitDetail({
   }, [git, repoPath, hash]);
 
   if (error) return <div className="p-3 text-destructive">{error}</div>;
-  if (!details)
-    return <div className="p-3 text-muted-foreground/60">loading…</div>;
+  if (!details) return <Loading />;
 
   return (
     <div className="flex h-full flex-col overflow-y-auto text-[12px]">
