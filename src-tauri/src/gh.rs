@@ -5,7 +5,9 @@
 //! itself. List output is gh's JSON, passed to the frontend verbatim — the
 //! TypeScript side owns those types.
 
-use crate::git::{command_output, describe_command_error, new_command, CommandError, NETWORK_TIMEOUT};
+use crate::git::{
+    blocking, command_output, describe_command_error, new_command, CommandError, NETWORK_TIMEOUT,
+};
 
 /// Run `gh <args>` inside `repo` and return stdout, or stderr as the error.
 /// Every gh call hits the network (API or a PR-branch fetch), hence
@@ -43,66 +45,75 @@ fn run_gh(repo: &str, args: &[&str]) -> Result<String, String> {
 
 /// Open pull requests on the repo's GitHub remote, as gh's JSON (verbatim).
 #[tauri::command]
-pub fn gh_pr_list(path: String) -> Result<String, String> {
-    run_gh(
-        &path,
-        &[
-            "pr",
-            "list",
-            "--limit",
-            "50",
-            "--json",
-            "number,title,body,author,headRefName,baseRefName,updatedAt,isDraft,reviewDecision,additions,deletions,url",
-        ],
-    )
+pub async fn gh_pr_list(path: String) -> Result<String, String> {
+    blocking(move || {
+        run_gh(
+            &path,
+            &[
+                "pr",
+                "list",
+                "--limit",
+                "50",
+                "--json",
+                "number,title,body,author,headRefName,baseRefName,updatedAt,isDraft,reviewDecision,additions,deletions,url",
+            ],
+        )
+    })
+    .await
 }
 
 /// The full unified diff of a pull request.
 #[tauri::command]
-pub fn gh_pr_diff(path: String, number: u64) -> Result<String, String> {
-    run_gh(&path, &["pr", "diff", &number.to_string()])
+pub async fn gh_pr_diff(path: String, number: u64) -> Result<String, String> {
+    blocking(move || run_gh(&path, &["pr", "diff", &number.to_string()])).await
 }
 
 /// Check out the PR's branch locally (gh creates a tracking branch, fetching
 /// from the contributor's fork when needed).
 #[tauri::command]
-pub fn gh_pr_checkout(path: String, number: u64) -> Result<String, String> {
-    run_gh(&path, &["pr", "checkout", &number.to_string()])
+pub async fn gh_pr_checkout(path: String, number: u64) -> Result<String, String> {
+    blocking(move || run_gh(&path, &["pr", "checkout", &number.to_string()])).await
 }
 
 /// Submit a review. GitHub requires a body for `comment` and
 /// `request-changes`; `approve` takes an optional one.
 #[tauri::command]
-pub fn gh_pr_review(
+pub async fn gh_pr_review(
     path: String,
     number: u64,
     verdict: String,
     body: String,
 ) -> Result<String, String> {
-    let flag = match verdict.as_str() {
-        "approve" => "--approve",
-        "comment" => "--comment",
-        "request-changes" => "--request-changes",
-        _ => return Err(format!("unknown review verdict: {verdict}")),
-    };
-    let n = number.to_string();
-    let mut args = vec!["pr", "review", &n, flag];
-    if !body.trim().is_empty() {
-        args.push("--body");
-        args.push(&body);
-    }
-    run_gh(&path, &args)
+    blocking(move || {
+        let flag = match verdict.as_str() {
+            "approve" => "--approve",
+            "comment" => "--comment",
+            "request-changes" => "--request-changes",
+            _ => return Err(format!("unknown review verdict: {verdict}")),
+        };
+        let n = number.to_string();
+        let mut args = vec!["pr", "review", &n, flag];
+        if !body.trim().is_empty() {
+            args.push("--body");
+            args.push(&body);
+        }
+        run_gh(&path, &args)
+    })
+    .await
 }
 
 /// Merge the PR with an explicit strategy, so gh never falls back to an
 /// interactive prompt.
 #[tauri::command]
-pub fn gh_pr_merge(path: String, number: u64, strategy: String) -> Result<String, String> {
-    let flag = match strategy.as_str() {
-        "merge" => "--merge",
-        "squash" => "--squash",
-        "rebase" => "--rebase",
-        _ => return Err(format!("unknown merge strategy: {strategy}")),
-    };
-    run_gh(&path, &["pr", "merge", &number.to_string(), flag])
+pub async fn gh_pr_merge(path: String, number: u64, strategy: String) -> Result<String, String> {
+    blocking(move || {
+        let flag = match strategy.as_str() {
+            "merge" => "--merge",
+            "squash" => "--squash",
+            "rebase" => "--rebase",
+            _ => return Err(format!("unknown merge strategy: {strategy}")),
+        };
+        run_gh(&path, &["pr", "merge", &number.to_string(), flag])
+    })
+    .await
 }

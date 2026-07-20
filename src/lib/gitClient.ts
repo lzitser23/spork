@@ -82,6 +82,11 @@ export interface GitClient {
   pull(path: string): Promise<string>;
   push(path: string): Promise<string>;
   clone(url: string, parentDir: string): Promise<string>;
+  /**
+   * Transfer-progress lines from a running push, as git prints them to a
+   * terminal ("Writing objects: 45% …"). Resolves to a stop function.
+   */
+  onPushProgress(onLine: (line: string) => void): Promise<() => void>;
 
   /**
    * Pull-request review, backed by the GitHub CLI (`gh`) — it brings its own
@@ -156,6 +161,8 @@ export const tauriGitClient: GitClient = {
   pull: (path) => invoke("git_pull", { path }),
   push: (path) => invoke("git_push", { path }),
   clone: (url, parentDir) => invoke("git_clone", { url, parentDir }),
+  onPushProgress: (onLine) =>
+    listen<string>("push-progress", (event) => onLine(event.payload)),
 
   prList: async (path) =>
     JSON.parse(await invoke<string>("gh_pr_list", { path })) as PullRequest[],

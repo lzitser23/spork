@@ -289,6 +289,7 @@ export function createFakeGit(overrides: Partial<FakeRepoState> = {}) {
     fetch: call("fetch", () => "ok"),
     pull: call("pull", () => "ok"),
     push: call("push", () => "ok"),
+    onPushProgress: call("onPushProgress", () => () => {}),
     clone: call("clone", (url: string, parentDir: string) => {
       const name = url.replace(/\.git$/, "").split("/").pop() || "repo";
       return `${parentDir}/${name}`;
