@@ -231,25 +231,152 @@ fn run_git_bytes(repo: &str, args: &[&str]) -> Result<Vec<u8>, String> {
 /// `--show-toplevel` works from any subdirectory of a repo, so the user can pick
 /// a nested folder and we still find the root. If they picked the `.git`
 /// directory itself, retry from its parent.
+///
+/// Discovery must never walk *past* a folder that carries its own repository:
+/// git silently skips over an invalid `.git` and keeps searching upward, so a
+/// damaged repo would otherwise open as whatever ancestor happens to be a repo
+/// (e.g. an accidentally-initialized home or Desktop folder).
 fn resolve_toplevel(path: &str) -> Result<String, String> {
-    if let Ok(top) = run_git(path, &["rev-parse", "--show-toplevel"]) {
-        let top = top.trim();
-        if !top.is_empty() {
-            return Ok(top.to_string());
-        }
-    }
     let p = Path::new(path);
-    if p.file_name().map(|n| n == ".git").unwrap_or(false) {
-        if let Some(parent) = p.parent() {
-            if let Ok(top) = run_git(&parent.to_string_lossy(), &["rev-parse", "--show-toplevel"]) {
-                let top = top.trim();
-                if !top.is_empty() {
-                    return Ok(top.to_string());
+
+    // The folder's contents *are* a git directory: a bare repo, or a stray
+    // `.git`. There is no work tree here, and running discovery from inside it
+    // could resolve an unrelated ancestor repo.
+    let is_git_dir =
+        p.join("HEAD").is_file() && p.join("objects").is_dir() && p.join("refs").is_dir();
+    if is_git_dir {
+        if p.file_name().map(|n| n == ".git").unwrap_or(false) {
+            if let Some(parent) = p.parent() {
+                if let Ok(top) = run_git(&parent.to_string_lossy(), &["rev-parse", "--show-toplevel"])
+                {
+                    let top = top.trim();
+                    if !top.is_empty() {
+                        return Ok(top.to_string());
+                    }
                 }
+            }
+            return Err(
+                "Not a Git repository — pick the project folder that contains .git, not .git itself"
+                    .into(),
+            );
+        }
+        return Err(
+            "This folder is a bare Git repository — it has no working files to show. Clone it (git clone <this folder> <destination>) and open the clone"
+                .into(),
+        );
+    }
+
+    let has_own_dot_git = p.join(".git").exists();
+    match run_git(path, &["rev-parse", "--show-toplevel"]) {
+        Ok(top) => {
+            let top = top.trim();
+            if !top.is_empty() {
+                if has_own_dot_git && !same_dir(p, Path::new(top)) {
+                    return Err(format!(
+                        "This folder has its own .git, but Git can't read it and found an enclosing repository at {top} instead. The folder's .git is likely damaged or incomplete (e.g. offloaded by cloud sync) — restore it and try again"
+                    ));
+                }
+                return Ok(top.to_string());
+            }
+        }
+        Err(e) => {
+            if has_own_dot_git {
+                return Err(format!("Failed to open repository: {e}"));
             }
         }
     }
     Err("Not a Git repository — pick the project folder that contains .git, not .git itself".into())
+}
+
+/// Whether two paths name the same directory, tolerating symlinks and platform
+/// path forms (git prints forward slashes on Windows, macOS may resolve
+/// `/tmp` → `/private/tmp`).
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+#[cfg(test)]
+mod resolve_toplevel_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// Fresh scratch dir under the system temp dir, removed on drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "spork-resolve-{name}-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            Scratch(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn git_init(dir: &Path, args: &[&str]) {
+        let mut cmd_args = vec!["init"];
+        cmd_args.extend_from_slice(args);
+        run_git(&dir.to_string_lossy(), &cmd_args).unwrap();
+    }
+
+    #[test]
+    fn nested_folder_resolves_to_repo_root() {
+        let scratch = Scratch::new("nested");
+        git_init(scratch.path(), &[]);
+        let sub = scratch.path().join("src");
+        fs::create_dir(&sub).unwrap();
+
+        let top = resolve_toplevel(&sub.to_string_lossy()).unwrap();
+        assert!(same_dir(Path::new(&top), scratch.path()));
+    }
+
+    #[test]
+    fn picking_dot_git_resolves_parent_worktree() {
+        let scratch = Scratch::new("dotgit");
+        git_init(scratch.path(), &[]);
+        let dot_git = scratch.path().join(".git");
+
+        let top = resolve_toplevel(&dot_git.to_string_lossy()).unwrap();
+        assert!(same_dir(Path::new(&top), scratch.path()));
+    }
+
+    #[test]
+    fn bare_repository_is_rejected_with_explanation() {
+        let scratch = Scratch::new("bare");
+        git_init(scratch.path(), &["--bare"]);
+
+        let err = resolve_toplevel(&scratch.path().to_string_lossy()).unwrap_err();
+        assert!(err.contains("bare"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn broken_dot_git_does_not_open_enclosing_repo() {
+        // Git skips an unreadable `.git` and keeps searching upward; without the
+        // guard, a damaged repo inside another repo opens as the outer one.
+        let scratch = Scratch::new("broken");
+        git_init(scratch.path(), &[]);
+        let inner = scratch.path().join("proj");
+        fs::create_dir_all(inner.join(".git")).unwrap();
+
+        let err = resolve_toplevel(&inner.to_string_lossy()).unwrap_err();
+        assert!(err.contains("its own .git"), "unexpected error: {err}");
+    }
 }
 
 /// Validate that `path` is a Git work tree and return basic info about it.
