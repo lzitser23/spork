@@ -1,6 +1,6 @@
 [package]
 name = "spork"
-version = "0.3.3"
+version = "0.4.0"
 description = "Spork — a native, black, monospace Git client"
 authors = ["lzitser23"]
 license = "MIT"
