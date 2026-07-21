@@ -18,7 +18,7 @@ import { DiffView } from "@/components/DiffView";
 import { ChangesView } from "@/components/ChangesView";
 import { FileBrowser } from "@/components/FileBrowser";
 import { PullRequestsView } from "@/components/PullRequestsView";
-import { PushProgress } from "@/components/PushProgress";
+import { ProgressCard } from "@/components/ProgressCard";
 import { CloneDialog } from "@/components/CloneDialog";
 import { MergeDialog, PromptDialog } from "@/components/Modal";
 import type { CommitActions } from "@/components/ContextMenu";
@@ -27,7 +27,8 @@ import { remoteHostLabel, remoteWebUrl } from "@/lib/remote";
 import { useGit } from "@/lib/gitClient";
 import { forgetRepo, recentRepos, rememberRepo } from "@/lib/recentRepos";
 import { useRepoSession, type SessionEvent } from "@/lib/repoSession";
-import { checkForUpdate, dismissUpdate } from "@/lib/updateCheck";
+import { checkForUpdate, dismissUpdate, type UpdateAsset } from "@/lib/updateCheck";
+import { downloadAndInstall, takeUpdateRecoveryError } from "@/lib/updater";
 import type { BranchMergeStrategy, Stash } from "@/lib/git";
 
 function EmptyState({
@@ -139,27 +140,66 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Latest progress line of a running self-update; also gates re-entry.
+  const [updateProgress, setUpdateProgress] = useState<string | null>(null);
+  const runSelfUpdate = useCallback(async (asset: UpdateAsset) => {
+    const mb = (n: number) => `${(n / 1048576).toFixed(1)} MB`;
+    setUpdateProgress("downloading update…");
+    try {
+      await downloadAndInstall(asset, (p) => {
+        if (p.phase === "downloading") {
+          const total = p.totalBytes
+            ? ` / ${mb(p.totalBytes)} (${Math.round((p.downloadedBytes / p.totalBytes) * 100)}%)`
+            : "";
+          setUpdateProgress(`downloading update… ${mb(p.downloadedBytes)}${total}`);
+        } else if (p.phase === "verifying") {
+          setUpdateProgress("verifying checksum…");
+        } else {
+          setUpdateProgress("restarting…");
+        }
+      });
+      // On success apply_update exits the app — anything after is failure-only.
+    } catch (e) {
+      setUpdateProgress(null);
+      toast(`update: ${String(e)}`);
+    }
+  }, []);
+
   // One check per launch: if GitHub has a newer release, offer it as a toast.
   // Silent on every failure (offline, rate-limited, no releases yet) — an
-  // update check should never surface an error.
+  // update check should never surface an error. A failed swap from a previous
+  // update is the exception: its recovery marker is reported once.
   useEffect(() => {
+    void takeUpdateRecoveryError().then((error) => {
+      if (error) toast(error, { id: "update-recovery", duration: Infinity, closeButton: true });
+    });
     checkForUpdate().then((update) => {
       if (!update) return;
       const done = () => dismissUpdate(update.version);
+      const asset = update.asset;
       toast(`Spork ${update.version} is available`, {
         id: "release-update",
         duration: Infinity,
         closeButton: true,
         onDismiss: done,
-        action: {
-          label: "Download",
-          onClick: () => {
-            done();
-            void openUrl(update.url).catch(() => {});
-          },
-        },
+        action: asset
+          ? {
+              label: "Update",
+              onClick: () => {
+                done();
+                void runSelfUpdate(asset);
+              },
+            }
+          : {
+              label: "Download",
+              onClick: () => {
+                done();
+                void openUrl(update.url).catch(() => {});
+              },
+            },
       });
     }, () => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const openRecent = useCallback(
@@ -511,7 +551,11 @@ export default function App() {
         />
       )}
 
-      {busy && pushProgress && <PushProgress line={pushProgress} />}
+      {updateProgress ? (
+        <ProgressCard line={updateProgress} />
+      ) : (
+        busy && pushProgress && <ProgressCard line={pushProgress} />
+      )}
 
       {mergeReq && (
         <MergeDialog
