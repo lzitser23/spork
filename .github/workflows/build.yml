@@ -60,7 +60,7 @@ jobs:
       # Tauri signs and notarizes automatically when these env vars are set:
       # the certificate ones import a Developer ID Application identity into a
       # temporary keychain; the APPLE_ID ones drive notarization (+ stapling).
-      - run: npm run tauri build -- --bundles dmg --target universal-apple-darwin
+      - run: npm run tauri build -- --bundles app,dmg --target universal-apple-darwin
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -68,10 +68,18 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # The self-updater downloads the bare (signed) app bundle; it never gets
+      # a quarantine attribute, so the zip needs no separate notarization.
+      - run: ditto -c -k --keepParent "src-tauri/target/universal-apple-darwin/release/bundle/macos/Spork.app" spork-macos-universal.app.zip
       - uses: actions/upload-artifact@v4
         with:
           name: Spork-macos-dmg
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Spork-macos-app
+          path: spork-macos-universal.app.zip
           if-no-files-found: error
 
   # Tag pushes become GitHub Releases; the in-app update check reads the
@@ -86,14 +94,22 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+      # The .sha256 sidecars are what the in-app updater verifies downloads
+      # against; they're generated here so they carry the final asset names.
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mv dist/Spork-windows-portable/spork.exe spork-windows-x64-portable.exe
           mv dist/Spork-macos-dmg/*.dmg spork-macos-universal.dmg
+          mv dist/Spork-macos-app/spork-macos-universal.app.zip spork-macos-universal.app.zip
+          sha256sum spork-windows-x64-portable.exe > spork-windows-x64-portable.exe.sha256
+          sha256sum spork-macos-universal.app.zip > spork-macos-universal.app.zip.sha256
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Spork $GITHUB_REF_NAME" \
             --generate-notes \
             spork-windows-x64-portable.exe \
-            spork-macos-universal.dmg
+            spork-windows-x64-portable.exe.sha256 \
+            spork-macos-universal.dmg \
+            spork-macos-universal.app.zip \
+            spork-macos-universal.app.zip.sha256

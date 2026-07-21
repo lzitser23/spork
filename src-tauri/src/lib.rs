@@ -2,6 +2,7 @@
 
 mod gh;
 mod git;
+mod update;
 mod watch;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -62,7 +63,12 @@ pub fn run() {
             gh::gh_pr_review,
             gh::gh_pr_merge,
             watch::start_repo_watch,
-            watch::stop_repo_watch
+            watch::stop_repo_watch,
+            update::update_platform,
+            update::download_update,
+            update::extract_app_zip,
+            update::apply_update,
+            update::take_update_recovery_error
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
