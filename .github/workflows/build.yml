@@ -35,7 +35,7 @@ jobs:
       # --no-bundle skips the NSIS/MSI installers; the release exe is already a
       # standalone, portable binary (WebView2 ships with Windows 10/11).
       - run: npm run tauri build -- --no-bundle
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Spork-windows-portable
           path: src-tauri/target/release/spork.exe
@@ -71,12 +71,12 @@ jobs:
       # The self-updater downloads the bare (signed) app bundle; it never gets
       # a quarantine attribute, so the zip needs no separate notarization.
       - run: ditto -c -k --keepParent "src-tauri/target/universal-apple-darwin/release/bundle/macos/Spork.app" spork-macos-universal.app.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Spork-macos-dmg
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Spork-macos-app
           path: spork-macos-universal.app.zip
