@@ -157,6 +157,27 @@ mod command_tests {
 
         assert!(matches!(err, CommandError::TimedOut), "unexpected error: {err:?}");
     }
+
+    #[test]
+    fn reject_option_like_refuses_leading_dash() {
+        assert!(reject_option_like("-f").is_err());
+        assert!(reject_option_like("--force").is_err());
+        assert!(reject_option_like("main").is_ok());
+        assert!(reject_option_like("feature/-weird").is_ok());
+        assert!(reject_option_like("stash@{0}").is_ok());
+    }
+}
+
+/// Reject a free-text ref/name that git would parse as an option (invariant
+/// #3). A leading `-` turns a ref named `-f` into a flag: `git checkout -f`
+/// force-discards the work tree. `checkout`/`reset`/`rebase` can't be guarded
+/// with a `--` separator (it forces a pathspec instead of a ref), so refuse
+/// the dash outright — no legitimate branch/tag/stash ref begins with one.
+fn reject_option_like(value: &str) -> Result<(), String> {
+    if value.starts_with('-') {
+        return Err(format!("invalid name: {value:?} may not begin with '-'"));
+    }
+    Ok(())
 }
 
 /// Run `git <args>` inside `repo` and return stdout, or stderr as the error.
@@ -630,6 +651,7 @@ pub fn git_stash(path: String) -> Result<String, String> {
 /// overwritten — that error is surfaced to the UI.
 #[tauri::command]
 pub fn git_checkout(path: String, name: String) -> Result<String, String> {
+    reject_option_like(&name)?;
     run_git(&path, &["checkout", &name])
 }
 
@@ -716,6 +738,7 @@ pub fn git_reset(path: String, hash: String, mode: String) -> Result<String, Str
         "hard" => "--hard",
         _ => return Err(format!("unknown reset mode: {mode}")),
     };
+    reject_option_like(&hash)?;
     run_git(&path, &["reset", flag, &hash])
 }
 
@@ -747,9 +770,12 @@ pub fn git_merge(path: String, source: String, strategy: String) -> Result<Strin
                 Ok("Already up to date.".to_string())
             }
         }
-        // rebase doesn't take a `--` separator the way merge does; `source` is a
-        // ref name from our own branch list, not free text.
-        "rebase" => run_git(&path, &["rebase", &source]),
+        // rebase doesn't take a `--` separator the way merge does, so a ref
+        // beginning with `-` would be parsed as an option — reject it instead.
+        "rebase" => {
+            reject_option_like(&source)?;
+            run_git(&path, &["rebase", &source])
+        }
         _ => Err(format!("unknown merge strategy: {strategy}")),
     }
 }
@@ -759,6 +785,7 @@ pub fn git_merge(path: String, source: String, strategy: String) -> Result<Strin
 #[tauri::command]
 pub fn git_delete_branch(path: String, name: String, force: bool) -> Result<String, String> {
     let flag = if force { "-D" } else { "-d" };
+    reject_option_like(&name)?;
     run_git(&path, &["branch", flag, &name])
 }
 
@@ -805,18 +832,21 @@ pub fn add_to_gitignore(path: String, file: String) -> Result<String, String> {
 /// Pop a stash (apply it and drop it).
 #[tauri::command]
 pub fn git_stash_pop(path: String, reff: String) -> Result<String, String> {
+    reject_option_like(&reff)?;
     run_git(&path, &["stash", "pop", &reff])
 }
 
 /// Apply a stash, keeping it in the stash list.
 #[tauri::command]
 pub fn git_stash_apply(path: String, reff: String) -> Result<String, String> {
+    reject_option_like(&reff)?;
     run_git(&path, &["stash", "apply", &reff])
 }
 
 /// Drop (delete) a stash without applying it.
 #[tauri::command]
 pub fn git_stash_drop(path: String, reff: String) -> Result<String, String> {
+    reject_option_like(&reff)?;
     run_git(&path, &["stash", "drop", &reff])
 }
 
@@ -835,6 +865,7 @@ pub fn git_create_tag(path: String, name: String, commit: Option<String>) -> Res
 /// Delete a tag.
 #[tauri::command]
 pub fn git_delete_tag(path: String, name: String) -> Result<String, String> {
+    reject_option_like(&name)?;
     run_git(&path, &["tag", "-d", &name])
 }
 
