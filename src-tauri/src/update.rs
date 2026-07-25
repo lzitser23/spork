@@ -16,6 +16,14 @@ use tauri::ipc::Channel;
 use tauri::Manager;
 
 const UPDATE_DIR_NAME: &str = "updates";
+/// The one repository self-updates may come from. The frontend already scopes
+/// its release query to this repo (updateCheck.ts), but the backend must not
+/// trust URLs handed to it by the webview: without this pin `validate_download_url`
+/// accepts *any* github.com repo, so a spoofed/compromised webview could point
+/// the updater at an attacker's release. Authenticity still rests on the SHA-256
+/// sidecar living in the same release — a signed manifest (see PR notes) is the
+/// stronger follow-up — but pinning the origin closes the "any repo" gap now.
+const UPDATE_REPO: &str = "lzitser23/spork";
 const RECOVERY_ERROR_NAME: &str = "install-error.txt";
 const MAX_PACKAGE_BYTES: usize = 512 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: usize = 1024 * 1024;
@@ -82,6 +90,10 @@ fn validate_asset_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty()
         || name.contains('/')
         || name.contains('\\')
+        // A `:` is a Windows drive/ADS separator: `PathBuf::join` treats
+        // "C:evil.exe" as drive-relative and drops the update-dir receiver, so
+        // the write escapes containment. No release asset name contains one.
+        || name.contains(':')
         || name.starts_with('.')
     {
         return Err("invalid update file name".into());
@@ -93,16 +105,25 @@ fn validate_asset_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Only GitHub release URLs over https — the URLs come from the webview.
+/// Only GitHub release URLs over https, pinned to [`UPDATE_REPO`] — the URLs
+/// come from the webview, so host alone isn't enough (any github.com repo would
+/// pass): the path must belong to our repo. `github.com` serves the browser
+/// download (`/<repo>/releases/download/...`), `api.github.com` the asset API
+/// (`/repos/<repo>/releases/...`).
 fn validate_download_url(url: &str, label: &str) -> Result<String, String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("{label} is invalid: {e}"))?;
     if parsed.scheme() != "https" {
         return Err(format!("{label} must use https"));
     }
-    match parsed.host_str() {
-        Some("github.com" | "api.github.com") => Ok(parsed.to_string()),
-        _ => Err(format!("{label} must be a GitHub release URL")),
+    let ok = match parsed.host_str() {
+        Some("github.com") => parsed.path().starts_with(&format!("/{UPDATE_REPO}/")),
+        Some("api.github.com") => parsed.path().starts_with(&format!("/repos/{UPDATE_REPO}/")),
+        _ => return Err(format!("{label} must be a GitHub release URL")),
+    };
+    if !ok {
+        return Err(format!("{label} must be a {UPDATE_REPO} release URL"));
     }
+    Ok(parsed.to_string())
 }
 
 /// First 64-hex-digit token in `line`, i.e. a SHA-256 in any common checksum
@@ -484,6 +505,8 @@ mod tests {
         assert!(validate_asset_name("spork-macos-universal.app.zip").is_ok());
         assert!(validate_asset_name("../evil.exe").is_err());
         assert!(validate_asset_name("dir\\evil.exe").is_err());
+        // Windows drive-relative path: `join` would drop the update-dir receiver.
+        assert!(validate_asset_name("C:evil.exe").is_err());
         assert!(validate_asset_name(".hidden.exe").is_err());
         assert!(validate_asset_name("notes.txt").is_err());
         assert!(validate_asset_name("").is_err());
@@ -491,10 +514,29 @@ mod tests {
 
     #[test]
     fn download_urls_must_be_github_https() {
-        assert!(validate_download_url("https://github.com/x/y/releases/download/v1/a.exe", "url").is_ok());
-        assert!(validate_download_url("https://api.github.com/repos/x/y/releases/assets/1", "url").is_ok());
-        assert!(validate_download_url("http://github.com/a.exe", "url").is_err());
+        assert!(validate_download_url(
+            "https://github.com/lzitser23/spork/releases/download/v1/a.exe",
+            "url"
+        )
+        .is_ok());
+        assert!(validate_download_url(
+            "https://api.github.com/repos/lzitser23/spork/releases/assets/1",
+            "url"
+        )
+        .is_ok());
+        assert!(validate_download_url("http://github.com/lzitser23/spork/a.exe", "url").is_err());
         assert!(validate_download_url("https://evil.com/a.exe", "url").is_err());
+        // Right host, wrong repo — the pin must reject it.
+        assert!(validate_download_url(
+            "https://github.com/attacker/evil/releases/download/v1/a.exe",
+            "url"
+        )
+        .is_err());
+        assert!(validate_download_url(
+            "https://api.github.com/repos/attacker/evil/releases/assets/1",
+            "url"
+        )
+        .is_err());
     }
 
     #[test]

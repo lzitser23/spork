@@ -160,8 +160,12 @@ export function useRepoSession(options: RepoSessionOptions = {}): RepoSession {
         await fn(git, repoPath);
         await load(repoPath);
       } catch (e) {
+        // A failed action can still have mutated the tree (e.g. a conflicted
+        // merge/revert/reset leaves the repo mid-operation), so reload to show
+        // the real state — as commit() does — then re-surface the failure,
+        // since load() clears the error on the way in.
+        await load(repoPath);
         setError(`${label}: ${String(e)}`);
-        setBusy(false);
       } finally {
         suppressNotifyUntilRef.current = Date.now() + SUPPRESS_TAIL_MS;
       }

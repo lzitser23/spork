@@ -1,5 +1,41 @@
 import "@testing-library/jest-dom/vitest";
 
+// Newer Node (>=22, on by default in 25+) ships a native `localStorage` global
+// that shadows jsdom's `window.localStorage`. That native store isn't wired to
+// a backing store here and doesn't expose the full Storage API, so tests that
+// call `localStorage.clear()` throw "clear is not a function". Install a
+// deterministic in-memory Storage on both globals — beating the native one via
+// defineProperty — so storage behaves identically regardless of Node's flags.
+class MemoryStorage {
+  private store = new Map<string, string>();
+  get length() {
+    return this.store.size;
+  }
+  clear() {
+    this.store.clear();
+  }
+  getItem(key: string) {
+    return this.store.has(key) ? (this.store.get(key) as string) : null;
+  }
+  setItem(key: string, value: string) {
+    this.store.set(key, String(value));
+  }
+  removeItem(key: string) {
+    this.store.delete(key);
+  }
+  key(index: number) {
+    return Array.from(this.store.keys())[index] ?? null;
+  }
+}
+const memoryStorage = new MemoryStorage() as unknown as Storage;
+for (const target of [globalThis, window] as const) {
+  Object.defineProperty(target, "localStorage", {
+    value: memoryStorage,
+    configurable: true,
+    writable: true,
+  });
+}
+
 // jsdom has no ResizeObserver; react-resizable-panels (ResizablePanelGroup)
 // needs one to mount. A no-op stand-in is enough — tests don't resize panels.
 class ResizeObserverStub {
